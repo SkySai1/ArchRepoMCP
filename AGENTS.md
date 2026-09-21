@@ -1355,18 +1355,13 @@ NFR-008A — использование Forgejo при разработке и �
 
 При разработке и отладке MCP Codex может использовать тестовый Forgejo как внешний provider и среду integration tests.
 
-Параметры подключения должны браться из .env / переменных окружения:
+Параметры подключения должны браться из .forgejo.env / переменных окружения:
 
 FORGEJO_URL
 FORGEJO_API_URL
 FORGEJO_TOKEN
 FORGEJO_USERNAME
 FORGEJO_ORGANIZATION
-
-FORGEJO_SSH_HOST
-FORGEJO_SSH_PORT
-FORGEJO_SSH_USER
-FORGEJO_SSH_KEY_PATH
 
 FORGEJO_DEFAULT_BRANCH
 FORGEJO_DEFAULT_PRIVATE
