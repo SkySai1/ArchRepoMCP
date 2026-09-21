@@ -10,11 +10,15 @@ def test_expected_mcp_tools_are_registered() -> None:
     tools = asyncio.run(mcp.list_tools())
 
     assert {tool.name for tool in tools} == {
+        "repository_create",
         "repository_open",
         "repository_validate",
+        "entity_create",
+        "entity_delete",
         "entity_list",
         "entity_read",
         "entity_search",
+        "entity_update",
     }
     assert all(tool.description for tool in tools)
     assert all(tool.input_schema["type"] == "object" for tool in tools)
@@ -31,4 +35,3 @@ def test_mcp_tool_returns_normalized_domain_error(tmp_path: Path) -> None:
             "details": {"path": str(tmp_path.resolve())},
         },
     }
-

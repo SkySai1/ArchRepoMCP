@@ -8,9 +8,21 @@ from typing import Any, TypeVar
 from mcp.server import MCPServer
 
 from arch_repo_mcp import __version__
-from arch_repo_mcp.entities import list_entities, read_entity, search_entities
+from arch_repo_mcp.entities import (
+    create_entity,
+    delete_entity,
+    list_entities,
+    read_entity,
+    search_entities,
+    update_entity,
+)
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
-from arch_repo_mcp.repository import open_repository, validate_repository
+from arch_repo_mcp.repository import (
+    RepositoryContext,
+    create_repository,
+    open_repository,
+    validate_repository,
+)
 
 ResultT = TypeVar("ResultT")
 
@@ -36,6 +48,39 @@ def _call(operation: Callable[[], ResultT]) -> dict[str, Any]:
         return {"ok": False, "error": error.as_dict()}
 
 
+def _repository_result(context: RepositoryContext) -> dict[str, Any]:
+    return {
+        "repository_root": str(context.root),
+        "declaration_path": context.declaration_path.as_posix(),
+        "declaration": {
+            "kind": context.declaration.kind,
+            "version": context.declaration.version,
+        },
+        "entities": [entity.name for entity in context.declaration.entities],
+    }
+
+
+@mcp.tool()
+def repository_create(
+    target_path: str,
+    declaration_source: str,
+    declaration_path: str = "architecture.yaml",
+    initial_branch: str = "main",
+) -> dict[str, Any]:
+    """Create a validated local Git repository without creating a commit."""
+
+    return _call(
+        lambda: _repository_result(
+            create_repository(
+                target_path,
+                declaration_source,
+                declaration_path,
+                initial_branch,
+            )
+        )
+    )
+
+
 @mcp.tool()
 def repository_open(
     repository_path: str,
@@ -43,19 +88,9 @@ def repository_open(
 ) -> dict[str, Any]:
     """Open and fully validate a local architecture Git repository without network access."""
 
-    def operation() -> dict[str, Any]:
-        context = open_repository(repository_path, declaration_path)
-        return {
-            "repository_root": str(context.root),
-            "declaration_path": context.declaration_path.as_posix(),
-            "declaration": {
-                "kind": context.declaration.kind,
-                "version": context.declaration.version,
-            },
-            "entities": [entity.name for entity in context.declaration.entities],
-        }
-
-    return _call(operation)
+    return _call(
+        lambda: _repository_result(open_repository(repository_path, declaration_path))
+    )
 
 
 @mcp.tool()
@@ -85,6 +120,25 @@ def entity_list(
 
 
 @mcp.tool()
+def entity_create(
+    repository_path: str,
+    entity_name: str,
+    entity_path: str,
+    declaration_path: str = "architecture.yaml",
+) -> dict[str, Any]:
+    """Create a local entity from its DSL template without commit or publication."""
+
+    return _call(
+        lambda: create_entity(
+            repository_path,
+            entity_name,
+            entity_path,
+            declaration_path,
+        ).as_dict()
+    )
+
+
+@mcp.tool()
 def entity_read(
     repository_path: str,
     entity_name: str,
@@ -95,6 +149,46 @@ def entity_read(
 
     return _call(
         lambda: read_entity(
+            repository_path,
+            entity_name,
+            entity_path,
+            declaration_path,
+        )
+    )
+
+
+@mcp.tool()
+def entity_update(
+    repository_path: str,
+    entity_name: str,
+    entity_path: str,
+    content: str,
+    declaration_path: str = "architecture.yaml",
+) -> dict[str, Any]:
+    """Replace a local entity and roll back when validation fails."""
+
+    return _call(
+        lambda: update_entity(
+            repository_path,
+            entity_name,
+            entity_path,
+            content,
+            declaration_path,
+        ).as_dict()
+    )
+
+
+@mcp.tool()
+def entity_delete(
+    repository_path: str,
+    entity_name: str,
+    entity_path: str,
+    declaration_path: str = "architecture.yaml",
+) -> dict[str, Any]:
+    """Delete one local entity without commit or publication."""
+
+    return _call(
+        lambda: delete_entity(
             repository_path,
             entity_name,
             entity_path,
@@ -135,4 +229,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
