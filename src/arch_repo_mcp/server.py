@@ -34,6 +34,11 @@ from arch_repo_mcp.local_git import (
 from arch_repo_mcp.local_git import (
     repository_status as local_repository_status,
 )
+from arch_repo_mcp.remote_sync import (
+    clone_repository,
+    fetch_repository,
+    publish_repository,
+)
 from arch_repo_mcp.repository import (
     RepositoryContext,
     create_repository,
@@ -47,9 +52,10 @@ mcp = MCPServer(
     "ArchRepoMCP",
     description="Local-first management of DSL-defined architecture Git repositories",
     instructions=(
-        "Use repository_open before entity operations. All exposed operations are local and "
-        "perform no fetch, pull, push, or provider API requests. Paths must identify local Git "
-        "repositories and repository-relative files."
+        "Use repository_open before entity operations. Network access occurs only through the "
+        "explicit repository_clone, repository_fetch, and repository_publish tools; no tool "
+        "performs an implicit pull, push, or provider API request. Paths must identify local "
+        "Git repositories and repository-relative files."
     ),
     version=__version__,
 )
@@ -61,7 +67,7 @@ def _call(operation: Callable[[], ResultT]) -> dict[str, Any]:
     except ArchRepoError as exc:
         return {"ok": False, "error": exc.as_dict()}
     except Exception:
-        error = ArchRepoError(ErrorCode.INVALID_REPOSITORY, "Unexpected local operation failure")
+        error = ArchRepoError(ErrorCode.INVALID_REPOSITORY, "Unexpected operation failure")
         return {"ok": False, "error": error.as_dict()}
 
 
@@ -258,6 +264,65 @@ def remote_configure(
             name,
             url,
             replace=replace,
+        ).as_dict()
+    )
+
+
+@mcp.tool()
+def repository_clone(
+    remote_url: str,
+    target_path: str,
+    declaration_path: str = "architecture.yaml",
+    branch: str | None = None,
+    include_tags: bool = False,
+) -> dict[str, Any]:
+    """Explicitly clone and validate a remote Git architecture repository."""
+
+    return _call(
+        lambda: clone_repository(
+            remote_url,
+            target_path,
+            declaration_path,
+            branch=branch,
+            include_tags=include_tags,
+        ).as_dict()
+    )
+
+
+@mcp.tool()
+def repository_fetch(
+    repository_path: str,
+    remote: str,
+    include_tags: bool = False,
+    prune: bool = False,
+) -> dict[str, Any]:
+    """Explicitly fetch a configured remote without changing the working tree."""
+
+    return _call(
+        lambda: fetch_repository(
+            repository_path,
+            remote,
+            include_tags=include_tags,
+            prune=prune,
+        ).as_dict()
+    )
+
+
+@mcp.tool()
+def repository_publish(
+    repository_path: str,
+    remote: str,
+    remote_branch: str,
+    declaration_path: str = "architecture.yaml",
+) -> dict[str, Any]:
+    """Validate and explicitly push current HEAD without force or implicit upstream."""
+
+    return _call(
+        lambda: publish_repository(
+            repository_path,
+            remote,
+            remote_branch,
+            declaration_path,
         ).as_dict()
     )
 
