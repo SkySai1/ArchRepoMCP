@@ -10,8 +10,13 @@ def test_expected_mcp_tools_are_registered() -> None:
     tools = asyncio.run(mcp.list_tools())
 
     assert {tool.name for tool in tools} == {
+        "branch_create",
         "repository_create",
+        "repository_branches",
+        "repository_diff",
+        "repository_history",
         "repository_open",
+        "repository_status",
         "repository_validate",
         "entity_create",
         "entity_delete",

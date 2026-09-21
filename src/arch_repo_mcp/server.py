@@ -17,6 +17,19 @@ from arch_repo_mcp.entities import (
     update_entity,
 )
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
+from arch_repo_mcp.local_git import (
+    create_branch,
+    list_branches,
+)
+from arch_repo_mcp.local_git import (
+    repository_diff as local_repository_diff,
+)
+from arch_repo_mcp.local_git import (
+    repository_history as local_repository_history,
+)
+from arch_repo_mcp.local_git import (
+    repository_status as local_repository_status,
+)
 from arch_repo_mcp.repository import (
     RepositoryContext,
     create_repository,
@@ -101,6 +114,96 @@ def repository_validate(
     """Validate the DSL, templates, paths, matching rules, and local entity files."""
 
     return _call(lambda: validate_repository(repository_path, declaration_path).as_dict())
+
+
+@mcp.tool()
+def repository_status(
+    repository_path: str,
+    declaration_path: str = "architecture.yaml",
+) -> dict[str, Any]:
+    """Return local Git status without fetch, pull, or other network operations."""
+
+    return _call(
+        lambda: local_repository_status(repository_path, declaration_path).as_dict()
+    )
+
+
+@mcp.tool()
+def repository_diff(
+    repository_path: str,
+    declaration_path: str = "architecture.yaml",
+    staged: bool = False,
+    base_revision: str | None = None,
+    target_revision: str | None = None,
+) -> dict[str, Any]:
+    """Return working-tree, staged, or revision-to-revision local Git diff."""
+
+    return _call(
+        lambda: {
+            "diff": local_repository_diff(
+                repository_path,
+                declaration_path,
+                staged=staged,
+                base_revision=base_revision,
+                target_revision=target_revision,
+            )
+        }
+    )
+
+
+@mcp.tool()
+def repository_branches(
+    repository_path: str,
+    declaration_path: str = "architecture.yaml",
+) -> dict[str, Any]:
+    """List local branches without contacting a remote."""
+
+    return _call(
+        lambda: [
+            branch.as_dict() for branch in list_branches(repository_path, declaration_path)
+        ]
+    )
+
+
+@mcp.tool()
+def branch_create(
+    repository_path: str,
+    branch_name: str,
+    start_point: str = "HEAD",
+    declaration_path: str = "architecture.yaml",
+) -> dict[str, Any]:
+    """Create a local branch without switching the repository to it."""
+
+    return _call(
+        lambda: create_branch(
+            repository_path,
+            branch_name,
+            start_point,
+            declaration_path,
+        ).as_dict()
+    )
+
+
+@mcp.tool()
+def repository_history(
+    repository_path: str,
+    declaration_path: str = "architecture.yaml",
+    max_count: int = 20,
+    revision: str = "HEAD",
+) -> dict[str, Any]:
+    """Return bounded local commit history without contacting a remote."""
+
+    return _call(
+        lambda: [
+            commit.as_dict()
+            for commit in local_repository_history(
+                repository_path,
+                declaration_path,
+                max_count=max_count,
+                revision=revision,
+            )
+        ]
+    )
 
 
 @mcp.tool()
