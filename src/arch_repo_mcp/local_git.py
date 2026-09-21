@@ -289,7 +289,7 @@ def _validate_branch_name(root: Path, branch_name: str) -> None:
         root,
         ["check-ref-format", "--branch", branch_name],
         operation="validate branch name",
-        allowed_return_codes={1},
+        allowed_return_codes={1, 128},
     )
     if result.returncode != 0:
         raise ArchRepoError(
