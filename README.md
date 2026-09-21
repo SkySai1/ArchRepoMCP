@@ -5,9 +5,9 @@ MCP-сервер для локального управления архитек
 явный контур синхронизации.
 
 Проект находится на ранней стадии разработки. Текущий вертикальный срез уже позволяет
-AI-агенту открыть и проверить локальный repository, получить список DSL-сущностей,
-прочитать их и выполнить текстовый поиск. Эти операции не используют сеть и не изменяют
-working tree.
+AI-агенту создать, открыть и проверить локальный repository, управлять DSL-сущностями и
+исследовать локальное Git-состояние. Ни одна из реализованных операций не использует сеть
+или автоматически создаёт commit.
 
 ## Реализовано
 
@@ -16,31 +16,30 @@ working tree.
 - обнаружение корня локального Git repository без сетевых операций;
 - repository confinement и запрет symbolic-link обходов;
 - проверка templates, конфликтов file matching и форматов файлов;
-- read-only Entity Service: `list`, `read`, `search`;
+- безопасное создание repository из декларации и её template bundle;
+- Entity Service: `list`, `read`, `search`, `create`, `update`, `delete`;
+- rollback entity mutations, не прошедших полную repository validation;
+- Local Git Service: `status`, `diff`, `history`, `list/create branch`;
 - MCP server на официальном Python SDK v2 со stdio transport;
 - нормализованная модель ошибок;
 - автоматические DSL, repository, entity и MCP contract tests.
 
-Пока не реализованы создание и изменение сущностей, создание repository, local Git
-operations, clone/pull/publish и Forgejo provider. Они будут добавляться отдельными слоями
-в соответствии с дорожной картой из `AGENTS.md`.
+Пока не реализованы commit, branch switch, remotes, clone/pull/publish и Forgejo provider.
+Они будут добавляться отдельными слоями в соответствии с дорожной картой из `AGENTS.md`.
 
 ## Архитектура текущего среза
 
 ```text
 MCP tools
    │
-   ├── repository_open / repository_validate
-   └── entity_list / entity_read / entity_search
+   ├── Repository Service ── create / open / validate
+   ├── Entity Service ────── list / read / search / create / update / delete
+   └── Local Git Service ─── status / diff / history / branches
+                │
+                ├── DSL v2 Engine
                 │
                 ▼
-       Local Repository Service
-                │
-                ▼
-          DSL v2 Engine
-                │
-                ▼
-     Local Git Repository (read-only)
+          Local Git Repository
 ```
 
 Нормативные документы расположены в `specs/`, реализация — в `src/`, а проверки
@@ -103,14 +102,25 @@ python -m arch_repo_mcp.server
 
 | Tool | Назначение |
 | --- | --- |
+| `repository_create` | Создать локальный Git repository из DSL declaration bundle |
 | `repository_open` | Открыть и полностью проверить локальный architecture repository |
 | `repository_validate` | Получить детальный validation report без изменения repository |
+| `repository_status` | Получить структурированный локальный Git status |
+| `repository_diff` | Получить working-tree, staged или revision diff |
+| `repository_history` | Получить ограниченную локальную commit history |
+| `repository_branches` | Получить список локальных веток |
+| `branch_create` | Создать локальную ветку без автоматического switch |
+| `entity_create` | Создать entity из объявленного template |
 | `entity_list` | Получить список экземпляров указанного DSL entity |
 | `entity_read` | Прочитать один экземпляр по repository-relative path |
 | `entity_search` | Найти текст во всех или в указанном типе entity |
+| `entity_update` | Локально заменить entity с validation и rollback |
+| `entity_delete` | Локально удалить entity с validation и rollback |
 
-Все tools принимают `repository_path`. Необязательный `declaration_path` по умолчанию
-равен явно документированному `architecture.yaml`. Ответ имеет единый envelope:
+Все tools кроме `repository_create` принимают `repository_path`. Repository и Entity tools
+также принимают необязательный `declaration_path` с явно документированным значением по
+умолчанию `architecture.yaml`. Git inspection отделён от DSL validation и остаётся доступен
+для диагностики невалидного working tree. Ответ имеет единый envelope:
 
 ```json
 {
@@ -131,6 +141,23 @@ python -m arch_repo_mcp.server
   }
 }
 ```
+
+### Создание repository
+
+`repository_create` принимает отсутствующий `target_path` и путь к исходной DSL-декларации
+`declaration_source`. Все указанные декларацией templates должны находиться рядом с ней по
+repository-relative путям. Сначала bundle полностью проверяется, затем во временном
+staging-каталоге выполняется `git init`, и только валидный результат переносится в target.
+
+Начальная ветка задаётся параметром `initial_branch` с документированным значением по
+умолчанию `main`. Операция не создаёт commit и не настраивает remote.
+
+### Изменение entities
+
+`entity_create` всегда использует объявленный DSL template как стартовое содержимое.
+`entity_update` принимает полное новое UTF-8 содержимое. Все три mutation tools оставляют
+изменения только в working tree, выполняют полную validation и восстанавливают исходное
+состояние при ошибке. Commit или push автоматически не выполняются.
 
 ## Минимальная DSL-декларация
 
