@@ -11,11 +11,15 @@ def test_expected_mcp_tools_are_registered() -> None:
 
     assert {tool.name for tool in tools} == {
         "branch_create",
+        "branch_switch",
+        "remote_configure",
         "repository_create",
         "repository_branches",
         "repository_diff",
         "repository_history",
+        "repository_commit",
         "repository_open",
+        "repository_remotes",
         "repository_status",
         "repository_validate",
         "entity_create",

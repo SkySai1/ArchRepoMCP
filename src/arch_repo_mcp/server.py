@@ -18,9 +18,13 @@ from arch_repo_mcp.entities import (
 )
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
 from arch_repo_mcp.local_git import (
+    configure_remote,
     create_branch,
     list_branches,
+    list_remotes,
+    switch_branch,
 )
+from arch_repo_mcp.local_git import repository_commit as local_repository_commit
 from arch_repo_mcp.local_git import (
     repository_diff as local_repository_diff,
 )
@@ -177,6 +181,40 @@ def branch_create(
 
 
 @mcp.tool()
+def branch_switch(
+    repository_path: str,
+    branch_name: str,
+    declaration_path: str = "architecture.yaml",
+) -> dict[str, Any]:
+    """Switch to a valid local branch only when the worktree and index are clean."""
+
+    return _call(
+        lambda: switch_branch(
+            repository_path,
+            branch_name,
+            declaration_path,
+        ).as_dict()
+    )
+
+
+@mcp.tool()
+def repository_commit(
+    repository_path: str,
+    message: str,
+    declaration_path: str = "architecture.yaml",
+) -> dict[str, Any]:
+    """Validate and commit only changed DSL-controlled paths without push."""
+
+    return _call(
+        lambda: local_repository_commit(
+            repository_path,
+            message,
+            declaration_path,
+        ).as_dict()
+    )
+
+
+@mcp.tool()
 def repository_history(
     repository_path: str,
     max_count: int = 20,
@@ -193,6 +231,34 @@ def repository_history(
                 revision=revision,
             )
         ]
+    )
+
+
+@mcp.tool()
+def repository_remotes(repository_path: str) -> dict[str, Any]:
+    """List local Git remotes while redacting credential-bearing URL components."""
+
+    return _call(
+        lambda: [remote.as_dict() for remote in list_remotes(repository_path)]
+    )
+
+
+@mcp.tool()
+def remote_configure(
+    repository_path: str,
+    name: str,
+    url: str,
+    replace: bool = False,
+) -> dict[str, Any]:
+    """Add or explicitly replace local remote configuration without network access."""
+
+    return _call(
+        lambda: configure_remote(
+            repository_path,
+            name,
+            url,
+            replace=replace,
+        ).as_dict()
     )
 
 
