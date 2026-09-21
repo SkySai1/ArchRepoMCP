@@ -120,7 +120,7 @@ MCP должен полноценно работать локально без �
 
 # 3. Предлагаемая структура организации
 
-## 3.1. Структура проекта MCP
+## 3.1. Общая структура проекта MCP
 
 ```text
 project/
@@ -148,7 +148,8 @@ project/
 │   ├── remote/
 │   │   ├── interface/
 │   │   └── providers/
-│   │       └── forgejo/
+│   │       ├── forgejo/
+│   │       └── ...
 │   │
 │   ├── dsl/
 │   │   ├── parser/
@@ -158,39 +159,37 @@ project/
 │   │
 │   └── config/
 │
-├── dsl/
-│   │
-│   ├── schema/
-│   │   └── ...
+├── specs/
 │   │
 │   ├── contracts/
+│   │   ├── forgejo/
+│   │   │   ├── repositories.yaml
+│   │   │   ├── authentication.yaml
+│   │   │   ├── errors.yaml
+│   │   │   └── ...
+│   │   │
+│   │   ├── gitlab/
+│   │   │   └── ...
+│   │   │
 │   │   └── ...
 │   │
-│   ├── presets/
-│   │   └── ...
+│   ├── dsl/
+│   │   ├── schema/
+│   │   ├── contracts/
+│   │   ├── presets/
+│   │   └── README.md
 │   │
-│   └── README.md
-│
-├── contracts/
-│   │
-│   ├── core/
-│   ├── repository/
-│   ├── git/
-│   ├── remote/
-│   │   └── forgejo/
-│   └── errors/
-│
-├── examples/
-│   │
-│   ├── declarations/
-│   │   ├── minimal.yaml
-│   │   ├── architecture.yaml
-│   │   └── ...
-│   │
-│   ├── repositories/
-│   │   └── ...
-│   │
-│   └── README.md
+│   └── examples/
+│       │
+│       ├── declarations/
+│       │   ├── minimal.yaml
+│       │   ├── architecture.yaml
+│       │   └── ...
+│       │
+│       ├── repositories/
+│       │   └── ...
+│       │
+│       └── README.md
 │
 ├── tests/
 │   │
@@ -200,53 +199,597 @@ project/
 │   ├── dsl/
 │   ├── repositories/
 │   └── providers/
-│       └── forgejo/
+│       ├── forgejo/
+│       └── ...
 │
 └── README.md
 ```
 
-### `dsl/`
-
-Каталог содержит нормативное описание языка DSL:
+Основное разделение проекта:
 
 ```text
-dsl/
+specs/
+   ↓
+нормативное описание
+
+src/
+   ↓
+реализация
+
+tests/
+   ↓
+проверка соответствия реализации спецификациям
+```
+
+`specs/` является нормативной частью проекта и не должен зависеть от конкретной реализации MCP.
+
+---
+
+## 3.2. Директория `specs/contracts/`
+
+Директория:
+
+```text
+specs/contracts/
+```
+
+содержит **YAML-контракты интеграции с внешними сервисами**.
+
+Каждый внешний сервис должен иметь отдельную поддиректорию.
+
+Например:
+
+```text
+specs/contracts/
+│
+├── forgejo/
+│   ├── authentication.yaml
+│   ├── repositories.yaml
+│   ├── errors.yaml
+│   └── ...
+│
+├── gitlab/
+│   └── ...
+│
+└── github/
+    └── ...
+```
+
+Первым поддерживаемым внешним сервисом является:
+
+```text
+Forgejo
+```
+
+Контракты внутри:
+
+```text
+specs/contracts/forgejo/
+```
+
+являются нормативным источником для реализации:
+
+```text
+src/remote/providers/forgejo/
+```
+
+Связь должна быть следующей:
+
+```text
+specs/contracts/forgejo/*.yaml
+              ↓
+      анализ контрактов
+              ↓
+src/remote/providers/forgejo/
+              ↓
+        contract tests
+```
+
+### Назначение YAML-контрактов
+
+Контракт внешнего сервиса должен описывать необходимые для реализации сведения, например:
+
+```text
+имя операции
+назначение операции
+
+HTTP method
+endpoint
+
+request parameters
+required / optional
+
+request body
+
+response model
+
+authentication requirements
+
+error mapping
+
+pagination
+
+ограничения операции
+```
+
+Конкретная структура YAML определяется отдельным контрактом формата provider specifications.
+
+AI-агент-разработчик не должен реализовывать API-функцию внешнего сервиса только на основании собственных знаний о Forgejo, GitLab или другом provider.
+
+Источником требований является:
+
+```text
+specs/contracts/<provider>/
+```
+
+Если внешний сервис умеет некоторую функцию, но соответствующая возможность отсутствует в YAML-контрактах, она не должна автоматически становиться частью MCP.
+
+---
+
+## 3.3. Связь contracts и API-модулей
+
+Каждому поддерживаемому provider должен соответствовать программный модуль:
+
+```text
+specs/contracts/<provider>/
+             ↕
+src/remote/providers/<provider>/
+```
+
+Например:
+
+```text
+specs/contracts/forgejo/
+             ↓
+src/remote/providers/forgejo/
+```
+
+При добавлении нового provider:
+
+```text
+GitLab
+```
+
+сначала должны появиться его нормативные контракты:
+
+```text
+specs/contracts/gitlab/
+```
+
+и только затем реализация:
+
+```text
+src/remote/providers/gitlab/
+```
+
+Не допускается ситуация:
+
+```text
+src/remote/providers/gitlab/
+```
+
+существует как публично поддерживаемый provider, но:
+
+```text
+specs/contracts/gitlab/
+```
+
+отсутствует.
+
+---
+
+## 3.4. Contract-driven реализация provider
+
+Разработка API-модуля должна следовать цепочке:
+
+```text
+YAML contracts
+      ↓
+contract parser / analysis
+      ↓
+function inventory
+      ↓
+request / response models
+      ↓
+provider implementation
+      ↓
+contract tests
+```
+
+Каждая публичная provider-функция должна иметь трассировку:
+
+```text
+YAML contract
+      ↓
+implementation
+      ↓
+test
+```
+
+Контракты должны определять только те возможности внешнего provider, которые необходимы MCP.
+
+На первом этапе это преимущественно общие repository-level операции:
+
+```text
+authentication
+
+connection check
+
+repository existence
+
+repository metadata
+
+remote repository creation
+если предусмотрено требованиями
+
+remote URL resolution
+```
+
+Контракты первого этапа не должны описывать API непосредственного управления архитектурными файлами через внешний provider.
+
+Не реализуются через provider REST API:
+
+```text
+remote_file_read
+remote_file_create
+remote_file_update
+remote_file_delete
+remote_batch_file_update
+```
+
+Работа с содержимым выполняется через локальный Git repository.
+
+---
+
+## 3.5. Директория `specs/dsl/`
+
+Директория:
+
+```text
+specs/dsl/
+```
+
+содержит нормативное описание DSL архитектурного репозитория.
+
+Предлагаемая структура:
+
+```text
+specs/dsl/
+│
 ├── schema/
+│   └── ...
+│
 ├── contracts/
+│   └── ...
+│
 ├── presets/
+│   └── ...
+│
 └── README.md
 ```
 
-В нём не должны храниться декларации конкретных архитектурных репозиториев.
+### `schema/`
 
-### `examples/declarations/`
+Содержит машинно-читаемое описание структуры DSL, если соответствующий формат используется проектом.
+
+### `contracts/`
+
+Содержит semantic contracts DSL:
+
+```text
+допустимые элементы
+отношения между элементами
+ограничения
+правила validation
+семантику DSL
+```
+
+### `presets/`
+
+Содержит нормативный набор закрытых preset-значений DSL.
+
+### `README.md`
+
+Содержит описание:
+
+* назначения DSL;
+* версии;
+* правил расширения;
+* структуры спецификации;
+* порядка validation.
+
+---
+
+## 3.6. Отличие `specs/dsl/` от `src/dsl/`
+
+Эти директории имеют принципиально разные назначения.
+
+```text
+specs/dsl/
+```
+
+определяет:
+
+> Как DSL обязан работать.
+
+```text
+src/dsl/
+```
+
+реализует:
+
+> Как MCP выполняет эти правила.
+
+Связь:
+
+```text
+specs/dsl/
+     ↓
+ normative contracts
+     ↓
+src/dsl/
+     ↓
+ parser / validator / resolver
+```
+
+Изменение реализации в:
+
+```text
+src/dsl/
+```
+
+не должно незаметно изменять семантику:
+
+```text
+specs/dsl/
+```
+
+---
+
+## 3.7. Директория `specs/examples/`
+
+Директория:
+
+```text
+specs/examples/
+```
+
+содержит нормативные и демонстрационные примеры использования спецификаций.
+
+Предлагаемая структура:
+
+```text
+specs/examples/
+│
+├── declarations/
+│   ├── minimal.yaml
+│   ├── architecture.yaml
+│   └── ...
+│
+├── repositories/
+│   └── ...
+│
+└── README.md
+```
+
+---
+
+## 3.8. `specs/examples/declarations/`
+
+Директория:
+
+```text
+specs/examples/declarations/
+```
+
+содержит валидные примеры деклараций DSL.
+
+Например:
+
+```text
+minimal.yaml
+architecture.yaml
+requirements-and-facts.yaml
+```
+
+Все декларации в этой директории должны:
+
+1. соответствовать текущей версии DSL;
+2. проходить автоматический DSL validator;
+3. использоваться в regression tests;
+4. обновляться при изменении semantic contract DSL;
+5. использовать только возможности, определённые в `specs/dsl/`.
+
+Таким образом:
+
+```text
+specs/dsl/
+       ↓
+определяет язык
+       ↓
+specs/examples/declarations/
+       ↓
+демонстрирует корректное использование языка
+       ↓
+tests/
+       ↓
+проверяет реализацию
+```
+
+---
+
+## 3.9. `specs/examples/repositories/`
 
 Каталог:
 
 ```text
-examples/declarations/
+specs/examples/repositories/
 ```
 
-содержит **валидные примеры деклараций DSL**.
+может содержать небольшие эталонные архитектурные репозитории.
 
-Каждая декларация из `examples/declarations/` должна автоматически проверяться тестами DSL.
+Например:
 
-Примеры должны использоваться как:
+```text
+specs/examples/repositories/
+└── minimal-architecture/
+    │
+    ├── architecture.yaml
+    │
+    ├── facts/
+    │   └── F-0001.md
+    │
+    ├── requirements/
+    │   └── R-0001.md
+    │
+    ├── categories/
+    │   └── C-0001.md
+    │
+    └── templates/
+        ├── fact.md
+        ├── requirement.md
+        └── category.md
+```
 
-* документация;
-* regression corpus;
-* примеры для AI-агента;
-* проверка обратной совместимости DSL.
+Они могут использоваться:
+
+* в integration tests;
+* при разработке MCP;
+* как документация;
+* для проверки совместимости новой версии DSL;
+* как примеры для AI-агента.
 
 ---
 
-## 3.2. Структура управляемого архитектурного репозитория
+## 3.10. Структура `src/`
 
-MCP не должен жёстко требовать конкретную структуру сущностей.
+Каталог:
 
-Она определяется DSL-декларацией.
+```text
+src/
+```
 
-Пример:
+содержит исключительно программную реализацию MCP.
+
+### `src/mcp/`
+
+Содержит MCP transport/exposure layer:
+
+```text
+server
+tools
+public models
+```
+
+### `src/core/`
+
+Содержит provider-independent domain logic:
+
+```text
+Repository Model
+Entity Service
+Validation
+Governance
+```
+
+### `src/git/`
+
+Содержит работу с локальным Git:
+
+```text
+status
+diff
+history
+branches
+commits
+remotes
+```
+
+### `src/remote/`
+
+Содержит внешний synchronization layer:
+
+```text
+interface/
+providers/
+```
+
+Provider modules должны реализовывать общий интерфейс и не проникать непосредственно в Core.
+
+### `src/dsl/`
+
+Содержит реализацию нормативных правил:
+
+```text
+specs/dsl/
+```
+
+в виде:
+
+```text
+parser
+validator
+models
+resolver
+```
+
+---
+
+## 3.11. Структура `tests/`
+
+Предлагаемая структура:
+
+```text
+tests/
+│
+├── unit/
+│
+├── contract/
+│
+├── integration/
+│
+├── dsl/
+│
+├── repositories/
+│
+└── providers/
+    ├── forgejo/
+    └── ...
+```
+
+Особое значение имеют contract tests.
+
+Они должны проверять соответствие:
+
+```text
+specs/
+   ↕
+src/
+```
+
+Например:
+
+```text
+specs/contracts/forgejo/
+          ↕
+src/remote/providers/forgejo/
+```
+
+и:
+
+```text
+specs/dsl/
+     ↕
+src/dsl/
+```
+
+---
+
+## 3.12. Структура управляемого архитектурного репозитория
+
+Структуру конкретного архитектурного репозитория не следует смешивать со структурой исходного кода MCP.
+
+Например управляемый repository может выглядеть так:
 
 ```text
 architecture-repository/
@@ -276,7 +819,7 @@ architecture-repository/
 └── .git/
 ```
 
-Конкретные:
+При этом конкретные каталоги:
 
 ```text
 facts/
@@ -285,11 +828,78 @@ categories/
 artifacts/
 ```
 
-не являются встроенными типами MCP.
+не являются частью hardcoded структуры MCP.
 
-Они являются следствием DSL-декларации конкретного репозитория.
+Их назначение определяется DSL-декларацией конкретного repository.
 
 ---
+
+## 3.13. Итоговое разделение ответственности
+
+В результате проект разделяется на четыре основных слоя:
+
+```text
+specs/
+   │
+   ├── contracts/
+   │      внешние сервисы
+   │
+   ├── dsl/
+   │      язык архитектурного repository
+   │
+   └── examples/
+          примеры использования спецификаций
+
+src/
+   │
+   └── реализация этих спецификаций
+
+tests/
+   │
+   └── проверка соответствия specs ↔ src
+
+Architecture Repository
+   │
+   └── реальные пользовательские данные
+```
+
+Главный принцип:
+
+```text
+specs/
+  ↓
+определяет
+
+src/
+  ↓
+реализует
+
+tests/
+  ↓
+доказывает соответствие
+```
+
+При этом:
+
+```text
+specs/contracts/
+```
+
+определяет контракты взаимодействия с внешними сервисами,
+
+```text
+specs/dsl/
+```
+
+определяет язык описания архитектурного репозитория,
+
+а:
+
+```text
+specs/examples/declarations/
+```
+
+содержит эталонные примеры использования этого языка.
 
 # 4. Функциональные требования
 
