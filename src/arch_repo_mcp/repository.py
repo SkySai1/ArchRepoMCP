@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -13,6 +15,7 @@ import yaml
 
 from arch_repo_mcp.dsl import (
     FileFormat,
+    MatchMode,
     RepositoryDeclaration,
     ValidationIssue,
     load_declaration,
@@ -50,6 +53,76 @@ class RepositoryValidationReport:
             "entity_counts": self.entity_counts,
             "issues": [issue.as_dict() for issue in self.issues],
         }
+
+
+def create_repository(
+    target_path: str | Path,
+    declaration_source: str | Path,
+    declaration_path: str = DEFAULT_DECLARATION_PATH,
+    initial_branch: str = "main",
+) -> RepositoryContext:
+    """Create and validate a local Git repository from a declaration bundle."""
+
+    target = _resolve_new_repository_target(target_path)
+    relative_declaration = _validate_relative_file_path(
+        declaration_path, label="declaration"
+    )
+    source_file = _resolve_declaration_source(declaration_source)
+    declaration = load_declaration(source_file)
+    source_root = source_file.parent
+    templates = _resolve_source_templates(source_root, declaration)
+
+    if relative_declaration in templates:
+        raise ArchRepoError(
+            ErrorCode.CONFLICT,
+            "Declaration path conflicts with a template path",
+            details={"path": relative_declaration.as_posix()},
+        )
+    _validate_branch_name(initial_branch)
+
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{target.name}.archrepo-", dir=str(target.parent))
+    ).resolve()
+    try:
+        destination = staging.joinpath(*relative_declaration.parts)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_file, destination)
+
+        for template_path, template_source in templates.items():
+            template_destination = staging.joinpath(*template_path.parts)
+            template_destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(template_source, template_destination)
+
+        for entity in declaration.entities:
+            if entity.files.path.mode is MatchMode.EXACT:
+                entity_directory = PurePosixPath(entity.files.path.value)
+                if entity_directory != PurePosixPath("."):
+                    staging.joinpath(*entity_directory.parts).mkdir(
+                        parents=True, exist_ok=True
+                    )
+
+        _initialize_git_repository(staging, initial_branch)
+        report = validate_repository(staging, relative_declaration.as_posix())
+        if not report.valid:
+            raise ArchRepoError(
+                ErrorCode.INVALID_REPOSITORY,
+                "Created repository did not pass validation",
+                details=report.as_dict(),
+            )
+        staging.replace(target)
+    except ArchRepoError:
+        raise
+    except (OSError, shutil.Error) as exc:
+        raise ArchRepoError(
+            ErrorCode.INVALID_REPOSITORY,
+            "Repository could not be created",
+            details={"path": str(target)},
+        ) from exc
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+
+    return open_repository(target, relative_declaration.as_posix())
 
 
 def discover_repository_root(repository_path: str | Path) -> Path:
@@ -174,12 +247,134 @@ def validate_repository(
     return _validate_loaded_repository(root, relative_declaration, declaration)
 
 
-def _resolve_confined_file(
-    root: Path,
-    relative_path: str,
-    *,
-    label: str,
-) -> tuple[PurePosixPath, Path]:
+def _resolve_new_repository_target(target_path: str | Path) -> Path:
+    raw_target = Path(target_path).expanduser()
+    if raw_target.exists() or raw_target.is_symlink():
+        raise ArchRepoError(
+            ErrorCode.CONFLICT,
+            "Target repository path already exists",
+            details={"path": str(raw_target)},
+        )
+    if not raw_target.name:
+        raise ArchRepoError(ErrorCode.VALIDATION_ERROR, "Target repository path is empty")
+    try:
+        parent = raw_target.parent.resolve(strict=True)
+    except (FileNotFoundError, OSError) as exc:
+        raise ArchRepoError(
+            ErrorCode.NOT_FOUND,
+            "Target repository parent directory does not exist",
+            details={"path": str(raw_target.parent)},
+        ) from exc
+    if not parent.is_dir():
+        raise ArchRepoError(
+            ErrorCode.INVALID_REPOSITORY,
+            "Target repository parent is not a directory",
+            details={"path": str(parent)},
+        )
+    target = parent / raw_target.name
+    if target.exists() or target.is_symlink():
+        raise ArchRepoError(
+            ErrorCode.CONFLICT,
+            "Target repository path already exists",
+            details={"path": str(target)},
+        )
+    return target
+
+
+def _resolve_declaration_source(declaration_source: str | Path) -> Path:
+    source = Path(declaration_source).expanduser()
+    if source.is_symlink():
+        raise ArchRepoError(
+            ErrorCode.PERMISSION_DENIED,
+            "Declaration source must not be a symbolic link",
+        )
+    try:
+        source = source.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ArchRepoError(
+            ErrorCode.NOT_FOUND, "Declaration source file was not found"
+        ) from exc
+    except OSError as exc:
+        raise ArchRepoError(
+            ErrorCode.INVALID_REPOSITORY, "Declaration source could not be resolved"
+        ) from exc
+    if not source.is_file():
+        raise ArchRepoError(
+            ErrorCode.VALIDATION_ERROR, "Declaration source is not a file"
+        )
+    return source
+
+
+def _resolve_source_templates(
+    source_root: Path,
+    declaration: RepositoryDeclaration,
+) -> dict[PurePosixPath, Path]:
+    templates: dict[PurePosixPath, Path] = {}
+    for entity in declaration.entities:
+        template_path = entity.files.template
+        _, source = _resolve_confined_file(
+            source_root, template_path.as_posix(), label="template source"
+        )
+        issue = _validate_file_format(source, entity.files.format, template_path.as_posix())
+        if issue is not None:
+            raise ArchRepoError(
+                ErrorCode.VALIDATION_ERROR,
+                "Template source does not match the declared format",
+                details={"issues": [issue.as_dict()]},
+            )
+        templates[template_path] = source
+    return templates
+
+
+def _validate_branch_name(branch_name: str) -> None:
+    if not branch_name:
+        raise ArchRepoError(ErrorCode.VALIDATION_ERROR, "Initial branch name must not be empty")
+    try:
+        result = subprocess.run(
+            ["git", "check-ref-format", "--branch", branch_name],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError as exc:
+        raise ArchRepoError(ErrorCode.GIT_ERROR, "Git executable was not found") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ArchRepoError(ErrorCode.TIMEOUT, "Git branch validation timed out") from exc
+    except OSError as exc:
+        raise ArchRepoError(ErrorCode.GIT_ERROR, "Git branch validation failed") from exc
+    if result.returncode != 0:
+        raise ArchRepoError(
+            ErrorCode.VALIDATION_ERROR,
+            "Initial branch name is not valid",
+            details={"branch": branch_name},
+        )
+
+
+def _initialize_git_repository(repository: Path, initial_branch: str) -> None:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repository), "init", "--quiet", "--initial-branch", initial_branch],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_GIT_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError as exc:
+        raise ArchRepoError(ErrorCode.GIT_ERROR, "Git executable was not found") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ArchRepoError(ErrorCode.TIMEOUT, "Git repository initialization timed out") from exc
+    except OSError as exc:
+        raise ArchRepoError(ErrorCode.GIT_ERROR, "Git repository initialization failed") from exc
+    if result.returncode != 0:
+        raise ArchRepoError(ErrorCode.GIT_ERROR, "Git repository initialization failed")
+
+
+def _validate_relative_file_path(relative_path: str, *, label: str) -> PurePosixPath:
     if not relative_path or "\\" in relative_path:
         raise ArchRepoError(
             ErrorCode.INVALID_REPOSITORY,
@@ -192,6 +387,16 @@ def _resolve_confined_file(
             f"{label.capitalize()} path escapes the repository",
             details={"path": relative_path},
         )
+    return pure_path
+
+
+def _resolve_confined_file(
+    root: Path,
+    relative_path: str,
+    *,
+    label: str,
+) -> tuple[PurePosixPath, Path]:
+    pure_path = _validate_relative_file_path(relative_path, label=label)
 
     candidate = root.joinpath(*pure_path.parts)
     try:
@@ -209,7 +414,15 @@ def _resolve_confined_file(
             details={"path": relative_path},
         ) from exc
 
-    if not resolved.is_relative_to(root) or candidate.is_symlink():
+    path_parts = [
+        root.joinpath(*pure_path.parts[:index])
+        for index in range(1, len(pure_path.parts) + 1)
+    ]
+    if (
+        not resolved.is_relative_to(root)
+        or candidate.is_symlink()
+        or any(path.is_symlink() for path in path_parts)
+    ):
         raise ArchRepoError(
             ErrorCode.INVALID_REPOSITORY,
             f"{label.capitalize()} path is not confined to the repository",

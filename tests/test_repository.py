@@ -8,6 +8,7 @@ import pytest
 from arch_repo_mcp.entities import list_entities, read_entity, search_entities
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
 from arch_repo_mcp.repository import (
+    create_repository,
     discover_repository_root,
     open_repository,
     validate_repository,
@@ -55,6 +56,83 @@ def _make_repository(tmp_path: Path) -> Path:
     (repository / "facts" / "F-0001.md").write_text(VALID_MARKDOWN, encoding="utf-8")
     _git("init", "--quiet", cwd=repository)
     return repository
+
+
+def _make_declaration_bundle(tmp_path: Path) -> Path:
+    bundle = tmp_path / "declaration-bundle"
+    (bundle / "templates").mkdir(parents=True)
+    declaration = bundle / "minimal.yaml"
+    declaration.write_text(DECLARATION, encoding="utf-8")
+    (bundle / "templates" / "fact.md").write_text(VALID_MARKDOWN, encoding="utf-8")
+    return declaration
+
+
+def test_repository_create_initializes_valid_uncommitted_repository(tmp_path: Path) -> None:
+    declaration = _make_declaration_bundle(tmp_path)
+    target = tmp_path / "created-repository"
+
+    context = create_repository(target, declaration, initial_branch="architecture")
+
+    assert context.root == target.resolve()
+    assert (target / ".git").is_dir()
+    assert (target / "architecture.yaml").read_text(encoding="utf-8") == DECLARATION
+    assert (target / "templates" / "fact.md").read_text(encoding="utf-8") == VALID_MARKDOWN
+    assert (target / "facts").is_dir()
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=target,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout.strip()
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=target,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout
+    assert branch == "architecture"
+    assert "architecture.yaml" in status
+    assert "templates/" in status
+
+
+def test_repository_create_rejects_existing_target(tmp_path: Path) -> None:
+    declaration = _make_declaration_bundle(tmp_path)
+    target = tmp_path / "existing"
+    target.mkdir()
+
+    with pytest.raises(ArchRepoError) as captured:
+        create_repository(target, declaration)
+
+    assert captured.value.code is ErrorCode.CONFLICT
+    assert list(target.iterdir()) == []
+
+
+def test_repository_create_rolls_back_when_template_is_missing(tmp_path: Path) -> None:
+    declaration = _make_declaration_bundle(tmp_path)
+    (declaration.parent / "templates" / "fact.md").unlink()
+    target = tmp_path / "not-created"
+
+    with pytest.raises(ArchRepoError) as captured:
+        create_repository(target, declaration)
+
+    assert captured.value.code is ErrorCode.NOT_FOUND
+    assert not target.exists()
+    assert not list(tmp_path.glob(".not-created.archrepo-*"))
+
+
+def test_repository_create_rejects_invalid_initial_branch(tmp_path: Path) -> None:
+    declaration = _make_declaration_bundle(tmp_path)
+    target = tmp_path / "not-created"
+
+    with pytest.raises(ArchRepoError) as captured:
+        create_repository(target, declaration, initial_branch="invalid branch")
+
+    assert captured.value.code is ErrorCode.VALIDATION_ERROR
+    assert not target.exists()
 
 
 def test_valid_repository_opens_and_counts_entities(tmp_path: Path) -> None:
