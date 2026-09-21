@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -120,7 +121,7 @@ def clone_repository(
         ) from exc
     finally:
         if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+            _remove_tree(staging)
 
     return CloneResult(
         repository_root=str(target),
@@ -244,6 +245,19 @@ def _resolve_new_target(target_path: str | Path) -> Path:
     if resolved.exists() or resolved.is_symlink():
         raise ArchRepoError(ErrorCode.CONFLICT, "Clone target path already exists")
     return resolved
+
+
+def _remove_tree(path: Path) -> None:
+    def remove_read_only(
+        function: Any,
+        failing_path: str,
+        error: tuple[type[BaseException], BaseException, Any],
+    ) -> None:
+        del error
+        os.chmod(failing_path, stat.S_IWRITE)
+        function(failing_path)
+
+    shutil.rmtree(path, onerror=remove_read_only)
 
 
 def _require_safe_remote(root: Path, remote: str) -> None:
