@@ -4,6 +4,8 @@ declaration:
 
 entities:
   - name: fact
+    description: > 
+      Факт о существующей или проектируемой архитектуре: компоненте, интерфейсе, технологии, настройке, характеристике или ином установленном свойстве системы.
     relations:
       - requirement
       - category
@@ -13,11 +15,13 @@ entities:
         value: "facts"
       filename:
         match: regex
-        value: "^F-[0-9]{4}\.md$"
+        value: '^F-[0-9]{4}\.md$'
       format: markdown_front_matter
       template: "templates/fact.md"
 
   - name: requirement
+    description: > 
+      Требование к архитектуре: ТЗ, НПА, внутреннее требование
     relations:
       - architecture_artifact
     files:
@@ -26,11 +30,13 @@ entities:
         value: "requirements"
       filename:
         match: regex
-        value: "^R-[0-9]{4}\.md$"
+        value: '^R-[0-9]{4}\.md$'
       format: markdown_front_matter
       template: "templates/requirement.md"
 
   - name: architecture_artifact
+    description: > 
+      Архитектурный документ, схема или иной артефакт, описывающий архитектуру системы.
     relations:
       - category
     files:
@@ -39,17 +45,19 @@ entities:
         value: "artifacts"
       filename:
         match: regex
-        value: "^A-[0-9]{4}\.md$"
+        value: '^A-[0-9]{4}\.md$'
       format: markdown_front_matter
       template: "templates/artifact.md"
 
   - name: category
+    description: > 
+      Категория архитектурных фактов, требований и артефактов.
     files:
       path:
         match: exact
         value: "categories"
       filename:
         match: regex
-        value: "^C-[0-9]{4}\.md$"
+        value: '^C-[0-9]{4}\.md$'
       format: markdown_front_matter
       template: "templates/category.md"

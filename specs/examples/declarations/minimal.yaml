@@ -4,12 +4,14 @@ declaration:
 
 entities:
   - name: fact
+    description: > 
+      Факт о существующей или проектируемой архитектуре: компоненте, интерфейсе, технологии, настройке, характеристике или ином установленном свойстве системы.
     files:
       path:
         match: exact
         value: "facts"
       filename:
         match: regex
-        value: "^F-[0-9]{4}\.md$"
+        value: '^F-[0-9]{4}\.md$'
       format: markdown_front_matter
       template: "templates/fact.md"

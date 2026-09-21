@@ -1,0 +1,191 @@
+contract:
+  name: arch-repo-mcp-tools
+  version: '0.3'
+  transport: stdio
+
+response_envelope:
+  success_fields: [ok, result]
+  error_fields: [ok, error]
+  normalized_error_fields: [code, message, details]
+
+tools:
+  government_repository_initialize:
+    arguments:
+      workspace_path: {type: nullable_string, required: false, default: null}
+      government_repository_path: {type: nullable_string, required: false, default: null}
+      env_file: {type: nullable_string, required: false, default: null}
+      initial_branch: {type: string, required: false, default: main}
+    result:
+      kind: object
+      fields: [workspace_root, government_repository_root, created, declaration_path, declaration, entities]
+  repository_describe:
+    arguments:
+      workspace_path: {type: nullable_string, required: false, default: null}
+      government_repository_path: {type: nullable_string, required: false, default: null}
+      env_file: {type: nullable_string, required: false, default: null}
+    result:
+      kind: object
+      fields: [workspace_root, government_repository_root, declaration_path, declaration_source, declaration, workflow, entities]
+      entity_fields: [name, description, semantic_purpose, relations, path_rule, filename_rule, format, template_path, template_content]
+  repository_list:
+    arguments:
+      workspace_path: {type: nullable_string, required: false, default: null}
+      government_repository_path: {type: nullable_string, required: false, default: null}
+      env_file: {type: nullable_string, required: false, default: null}
+    result:
+      kind: object
+      fields: [workspace_root, government_repository_root, repositories]
+      repository_fields: [name, repository_path, declaration_path, valid, model_matches_government, entity_counts, issues]
+  repository_create:
+    arguments:
+      target_path: {type: string, required: true}
+      declaration_source: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+      initial_branch: {type: string, required: false, default: main}
+    result: {kind: object, fields: [repository_root, declaration_path, declaration, entities]}
+  repository_open:
+    arguments:
+      repository_path: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+    result: {kind: object, fields: [repository_root, declaration_path, declaration, entities]}
+  repository_validate:
+    arguments:
+      repository_path: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+    result: {kind: object, fields: [valid, repository_root, declaration_path, entity_counts, issues]}
+  repository_status:
+    arguments:
+      repository_path: {type: string, required: true}
+    result: {kind: object, fields: [branch, detached, head, clean, entries]}
+  repository_diff:
+    arguments:
+      repository_path: {type: string, required: true}
+      staged: {type: boolean, required: false, default: false}
+      base_revision: {type: nullable_string, required: false, default: null}
+      target_revision: {type: nullable_string, required: false, default: null}
+    result: {kind: object, fields: [diff]}
+  repository_branches:
+    arguments:
+      repository_path: {type: string, required: true}
+    result: {kind: array, item_fields: [name, current, commit]}
+  branch_create:
+    arguments:
+      repository_path: {type: string, required: true}
+      branch_name: {type: string, required: true}
+      start_point: {type: string, required: false, default: HEAD}
+    result: {kind: object, fields: [name, current, commit]}
+  branch_switch:
+    arguments:
+      repository_path: {type: string, required: true}
+      branch_name: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+    result: {kind: object, fields: [name, current, commit]}
+  repository_commit:
+    arguments:
+      repository_path: {type: string, required: true}
+      message: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+    result: {kind: object, fields: [commit, branch, message, paths]}
+  repository_history:
+    arguments:
+      repository_path: {type: string, required: true}
+      max_count: {type: integer, required: false, default: 20}
+      revision: {type: string, required: false, default: HEAD}
+    result:
+      kind: array
+      item_fields: [commit, parents, author_name, author_email, authored_at, subject]
+  repository_remotes:
+    arguments:
+      repository_path: {type: string, required: true}
+    result: {kind: array, item_fields: [name, fetch_urls, push_urls]}
+  remote_configure:
+    arguments:
+      repository_path: {type: string, required: true}
+      name: {type: string, required: true}
+      url: {type: string, required: true}
+      replace: {type: boolean, required: false, default: false}
+    result: {kind: object, fields: [name, fetch_urls, push_urls]}
+  repository_clone:
+    arguments:
+      remote_url: {type: string, required: true}
+      target_path: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+      branch: {type: nullable_string, required: false, default: null}
+      include_tags: {type: boolean, required: false, default: false}
+    result: {kind: object, fields: [repository_root, branch, head, declaration_path]}
+  repository_fetch:
+    arguments:
+      repository_path: {type: string, required: true}
+      remote: {type: string, required: true}
+      include_tags: {type: boolean, required: false, default: false}
+      prune: {type: boolean, required: false, default: false}
+    result: {kind: object, fields: [remote, local_head, fetched_head, tags_included, pruned]}
+  repository_pull:
+    arguments:
+      repository_path: {type: string, required: true}
+      remote: {type: string, required: true}
+      remote_branch: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+    result:
+      kind: object
+      fields: [remote, remote_branch, local_branch, previous_head, current_head, outcome]
+  repository_publish:
+    arguments:
+      repository_path: {type: string, required: true}
+      remote: {type: string, required: true}
+      remote_branch: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+    result: {kind: object, fields: [remote, local_branch, remote_branch, commit]}
+  entity_list:
+    arguments:
+      repository_path: {type: string, required: true}
+      entity_name: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+    result: {kind: array, item_fields: [entity, path, format, size_bytes]}
+  entity_create:
+    arguments:
+      repository_path: {type: string, required: true}
+      entity_name: {type: string, required: true}
+      entity_path: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+    result: {kind: object, fields: [entity, path, format, size_bytes]}
+  entity_read:
+    arguments:
+      repository_path: {type: string, required: true}
+      entity_name: {type: string, required: true}
+      entity_path: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+    result: {kind: object, fields: [entity, path, format, size_bytes, content]}
+  entity_read_related:
+    arguments:
+      repository_path: {type: string, required: true}
+      entity_name: {type: string, required: true}
+      entity_path: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+    result:
+      kind: object
+      fields: [source, relations]
+      relation_fields: [source_entity, source_path, entity, filename, relation_valid, found, status, path, expected_path, candidate_paths, format, content]
+  entity_update:
+    arguments:
+      repository_path: {type: string, required: true}
+      entity_name: {type: string, required: true}
+      entity_path: {type: string, required: true}
+      content: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+    result: {kind: object, fields: [entity, path, format, size_bytes]}
+  entity_delete:
+    arguments:
+      repository_path: {type: string, required: true}
+      entity_name: {type: string, required: true}
+      entity_path: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+    result: {kind: object, fields: [entity, path]}
+  entity_search:
+    arguments:
+      repository_path: {type: string, required: true}
+      query: {type: string, required: true}
+      entity_name: {type: nullable_string, required: false, default: null}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
+      case_sensitive: {type: boolean, required: false, default: false}
+    result: {kind: array, item_fields: [entity, path, matching_lines]}

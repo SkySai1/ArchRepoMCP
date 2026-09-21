@@ -150,6 +150,9 @@ activemq-data/
 # Environments
 .env
 .envrc
+.forgejo.env
+forgejo.env
+forgego.env
 .venv
 env/
 venv/

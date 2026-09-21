@@ -163,21 +163,12 @@ project/
 │   │
 │   ├── contracts/
 │   │   ├── forgejo/
-│   │   │   ├── repositories.yaml
-│   │   │   ├── authentication.yaml
-│   │   │   ├── errors.yaml
-│   │   │   └── ...
-│   │   │
-│   │   ├── gitlab/
-│   │   │   └── ...
+│   │   │   └── *.yaml
 │   │   │
 │   │   └── ...
 │   │
 │   ├── dsl/
-│   │   ├── schema/
-│   │   ├── contracts/
-│   │   ├── presets/
-│   │   └── README.md
+│   │   └── *.md
 │   │
 │   └── examples/
 │       │
@@ -185,11 +176,10 @@ project/
 │       │   ├── minimal.yaml
 │       │   ├── architecture.yaml
 │       │   └── ...
-│       │
 │       ├── repositories/
 │       │   └── ...
 │       │
-│       └── README.md
+│       └── ...
 │
 ├── tests/
 │   │
@@ -201,6 +191,9 @@ project/
 │   └── providers/
 │       ├── forgejo/
 │       └── ...
+│
+├── docs/
+│   └── ...
 │
 └── README.md
 ```
@@ -451,53 +444,7 @@ specs/dsl/
 
 содержит нормативное описание DSL архитектурного репозитория.
 
-Предлагаемая структура:
-
-```text
-specs/dsl/
-│
-├── schema/
-│   └── ...
-│
-├── contracts/
-│   └── ...
-│
-├── presets/
-│   └── ...
-│
-└── README.md
-```
-
-### `schema/`
-
-Содержит машинно-читаемое описание структуры DSL, если соответствующий формат используется проектом.
-
-### `contracts/`
-
-Содержит semantic contracts DSL:
-
-```text
-допустимые элементы
-отношения между элементами
-ограничения
-правила validation
-семантику DSL
-```
-
-### `presets/`
-
-Содержит нормативный набор закрытых preset-значений DSL.
-
-### `README.md`
-
-Содержит описание:
-
-* назначения DSL;
-* версии;
-* правил расширения;
-* структуры спецификации;
-* порядка validation.
-
+`architecture.yaml` служит шаблоной декларацией, которая создается при инициализации goverment репозитория по-умолчанию
 ---
 
 ## 3.6. Отличие `specs/dsl/` от `src/dsl/`
@@ -555,22 +502,6 @@ specs/examples/
 ```
 
 содержит нормативные и демонстрационные примеры использования спецификаций.
-
-Предлагаемая структура:
-
-```text
-specs/examples/
-│
-├── declarations/
-│   ├── minimal.yaml
-│   ├── architecture.yaml
-│   └── ...
-│
-├── repositories/
-│   └── ...
-│
-└── README.md
-```
 
 ---
 
@@ -1889,7 +1820,7 @@ F-0001.md
 
 ---
 
-## 7.3. Entity names не являются глобальными presets
+## 7.3. Entity names и description не являются глобальными presets
 
 Имена:
 
@@ -1898,6 +1829,14 @@ fact
 requirement
 category
 architecture_artifact
+```
+
+Описание
+```
+fact description
+requirement description
+category description
+architecture_artifact description
 ```
 
 являются identifiers конкретного repository.
@@ -1959,6 +1898,8 @@ Relations связывают объявленные типы сущностей.
 entities:
 
   - name: fact
+    description: >
+        fact description
     relations:
       - requirement
       - category
