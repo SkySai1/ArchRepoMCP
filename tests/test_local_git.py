@@ -7,11 +7,15 @@ import pytest
 
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
 from arch_repo_mcp.local_git import (
+    configure_remote,
     create_branch,
     list_branches,
+    list_remotes,
+    repository_commit,
     repository_diff,
     repository_history,
     repository_status,
+    switch_branch,
 )
 from arch_repo_mcp.repository import create_repository
 
@@ -186,3 +190,141 @@ def test_branch_creation_rejects_invalid_or_duplicate_name(tmp_path: Path) -> No
     with pytest.raises(ArchRepoError) as duplicate:
         create_branch(repository, "architecture-review")
     assert duplicate.value.code is ErrorCode.CONFLICT
+
+
+def test_commit_creates_initial_commit_from_controlled_paths(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path, commit=False)
+    _git(repository, "config", "user.name", "ArchRepo Test")
+    _git(repository, "config", "user.email", "archrepo@example.invalid")
+
+    result = repository_commit(repository, "Create architecture repository")
+
+    assert result.branch == "main"
+    assert result.message == "Create architecture repository"
+    assert result.paths == (
+        "architecture.yaml",
+        "facts/F-0001.md",
+        "templates/fact.md",
+    )
+    assert repository_status(repository).entries == ()
+    assert repository_history(repository)[0].commit == result.commit
+
+
+def test_commit_excludes_uncontrolled_staged_files(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+    (repository / "facts" / "F-0001.md").write_text(UPDATED_CONTENT, encoding="utf-8")
+    (repository / "notes.txt").write_text("not controlled by DSL", encoding="utf-8")
+    _git(repository, "add", "--", "notes.txt")
+
+    result = repository_commit(repository, "Update controlled architecture fact")
+    status = repository_status(repository)
+
+    assert result.paths == ("facts/F-0001.md",)
+    notes = next(entry for entry in status.entries if entry.path == "notes.txt")
+    assert notes.index_status == "A"
+    committed_files = _git(repository, "show", "--format=", "--name-only", "HEAD").stdout
+    assert "facts/F-0001.md" in committed_files
+    assert "notes.txt" not in committed_files
+
+
+def test_commit_requires_valid_repository_and_controlled_changes(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+
+    with pytest.raises(ArchRepoError) as unchanged:
+        repository_commit(repository, "No changes")
+    assert unchanged.value.code is ErrorCode.CONFLICT
+
+    (repository / "facts" / "F-0001.md").write_text("invalid", encoding="utf-8")
+    with pytest.raises(ArchRepoError) as invalid:
+        repository_commit(repository, "Invalid change")
+    assert invalid.value.code is ErrorCode.INVALID_REPOSITORY
+    assert repository_history(repository)[0].subject == "Initial architecture"
+
+
+def test_branch_switch_rejects_dirty_worktree(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+    create_branch(repository, "architecture-review")
+    (repository / "facts" / "F-0001.md").write_text(UPDATED_CONTENT, encoding="utf-8")
+
+    with pytest.raises(ArchRepoError) as captured:
+        switch_branch(repository, "architecture-review")
+
+    assert captured.value.code is ErrorCode.DIRTY_WORKTREE
+    assert repository_status(repository).branch == "main"
+
+
+def test_branch_switch_validates_target_and_restores_invalid_branch(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+    create_branch(repository, "invalid-architecture")
+    _git(repository, "switch", "--quiet", "invalid-architecture")
+    (repository / "facts" / "F-0001.md").write_text("invalid", encoding="utf-8")
+    _git(repository, "add", "--", "facts/F-0001.md")
+    _git(repository, "commit", "--quiet", "-m", "Break architecture content")
+    _git(repository, "switch", "--quiet", "main")
+
+    with pytest.raises(ArchRepoError) as captured:
+        switch_branch(repository, "invalid-architecture")
+
+    assert captured.value.code is ErrorCode.INVALID_REPOSITORY
+    assert repository_status(repository).branch == "main"
+    assert (repository / "facts" / "F-0001.md").read_text(encoding="utf-8") == INITIAL_CONTENT
+
+
+def test_branch_switch_moves_to_valid_local_branch(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+    create_branch(repository, "architecture-review")
+
+    switched = switch_branch(repository, "architecture-review")
+
+    assert switched.current
+    assert switched.name == "architecture-review"
+    assert repository_status(repository).branch == "architecture-review"
+
+
+def test_remote_configuration_is_local_and_explicitly_replaceable(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+
+    created = configure_remote(repository, "origin", "https://example.com/team/architecture.git")
+
+    assert created.fetch_urls == ("https://example.com/team/architecture.git",)
+    with pytest.raises(ArchRepoError) as duplicate:
+        configure_remote(repository, "origin", "https://example.com/team/replacement.git")
+    assert duplicate.value.code is ErrorCode.CONFLICT
+
+    replaced = configure_remote(
+        repository,
+        "origin",
+        "ssh://git@example.com/team/architecture.git",
+        replace=True,
+    )
+    assert replaced.fetch_urls == ("ssh://example.com/team/architecture.git",)
+    assert [remote.name for remote in list_remotes(repository)] == ["origin"]
+
+
+def test_remote_configuration_rejects_embedded_http_credentials(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+
+    with pytest.raises(ArchRepoError) as captured:
+        configure_remote(repository, "origin", "https://user:token@example.com/repository.git")
+
+    assert captured.value.code is ErrorCode.VALIDATION_ERROR
+    assert list_remotes(repository) == []
+
+
+def test_remote_listing_redacts_credentials_from_existing_configuration(
+    tmp_path: Path,
+) -> None:
+    repository = _make_repository(tmp_path)
+    _git(
+        repository,
+        "remote",
+        "add",
+        "legacy",
+        "https://user:secret-token@example.com/repository.git?signature=secret",
+    )
+
+    remote = list_remotes(repository)[0]
+
+    assert remote.fetch_urls == ("https://example.com/repository.git",)
+    assert "secret" not in str(remote.as_dict())
+    assert "user" not in str(remote.as_dict())

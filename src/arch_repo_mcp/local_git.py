@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
-from arch_repo_mcp.repository import discover_repository_root
+from arch_repo_mcp.repository import (
+    DEFAULT_DECLARATION_PATH,
+    RepositoryContext,
+    discover_repository_root,
+    open_repository,
+    validate_repository,
+)
 
 _GIT_TIMEOUT_SECONDS = 30
 
@@ -73,6 +80,36 @@ class GitCommit:
             "author_email": self.author_email,
             "authored_at": self.authored_at,
             "subject": self.subject,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GitCommitResult:
+    commit: str
+    branch: str
+    message: str
+    paths: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "commit": self.commit,
+            "branch": self.branch,
+            "message": self.message,
+            "paths": list(self.paths),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class GitRemote:
+    name: str
+    fetch_urls: tuple[str, ...]
+    push_urls: tuple[str, ...]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "fetch_urls": list(self.fetch_urls),
+            "push_urls": list(self.push_urls),
         }
 
 
@@ -222,6 +259,123 @@ def create_branch(
     return branch
 
 
+def switch_branch(
+    repository_path: str | Path,
+    branch_name: str,
+    declaration_path: str = DEFAULT_DECLARATION_PATH,
+) -> GitBranch:
+    """Switch to an existing local branch only from a clean, valid repository."""
+
+    context = open_repository(repository_path, declaration_path)
+    status = repository_status(context.root)
+    if status.entries:
+        raise ArchRepoError(
+            ErrorCode.DIRTY_WORKTREE,
+            "Branch switch requires a clean working tree and index",
+            details={"changed_paths": [entry.path for entry in status.entries]},
+        )
+    if status.branch is None:
+        raise ArchRepoError(
+            ErrorCode.CONFLICT, "Branch switch from detached or unresolved HEAD is not supported"
+        )
+
+    branches = list_branches(context.root)
+    target = next((branch for branch in branches if branch.name == branch_name), None)
+    if target is None:
+        raise ArchRepoError(
+            ErrorCode.NOT_FOUND,
+            "Local branch was not found",
+            details={"branch": branch_name},
+        )
+    if target.current:
+        return target
+
+    previous_branch = status.branch
+    _run_git(
+        context.root,
+        ["switch", "--no-guess", branch_name],
+        operation="switch branch",
+        conflict_on_failure=True,
+    )
+    try:
+        report = validate_repository(context.root, declaration_path)
+    except ArchRepoError:
+        _restore_branch(context.root, previous_branch)
+        raise
+    if not report.valid:
+        _restore_branch(context.root, previous_branch)
+        raise ArchRepoError(
+            ErrorCode.INVALID_REPOSITORY,
+            "Target branch is not a valid architecture repository",
+            details={
+                "target_branch": branch_name,
+                "restored_branch": previous_branch,
+                "validation": report.as_dict(),
+            },
+        )
+
+    switched = next(
+        (branch for branch in list_branches(context.root) if branch.name == branch_name),
+        None,
+    )
+    if switched is None or not switched.current:
+        raise ArchRepoError(ErrorCode.GIT_ERROR, "Switched branch could not be resolved")
+    return switched
+
+
+def repository_commit(
+    repository_path: str | Path,
+    message: str,
+    declaration_path: str = DEFAULT_DECLARATION_PATH,
+) -> GitCommitResult:
+    """Validate and commit only changed paths controlled by the repository DSL."""
+
+    if not message.strip() or "\0" in message:
+        raise ArchRepoError(ErrorCode.VALIDATION_ERROR, "Commit message must not be empty")
+    context = open_repository(repository_path, declaration_path)
+    status = repository_status(context.root)
+    if status.branch is None:
+        raise ArchRepoError(ErrorCode.CONFLICT, "Commit on detached HEAD is not supported")
+    paths = _permitted_changed_paths(context, status)
+    if not paths:
+        raise ArchRepoError(
+            ErrorCode.CONFLICT, "No changed architecture repository paths to commit"
+        )
+
+    _run_git(
+        context.root,
+        ["add", "-A", "--", *paths],
+        operation="stage architecture changes",
+    )
+    staged = _run_git(
+        context.root,
+        ["diff", "--cached", "--quiet", "--", *paths],
+        operation="inspect staged architecture changes",
+        allowed_return_codes={1},
+    )
+    if staged.returncode == 0:
+        raise ArchRepoError(
+            ErrorCode.CONFLICT, "Selected architecture paths contain no staged changes"
+        )
+    _run_git(
+        context.root,
+        ["commit", "--quiet", "--only", "-m", message, "--", *paths],
+        operation="commit architecture changes",
+        conflict_on_failure=True,
+    )
+    commit = _run_git(
+        context.root,
+        ["rev-parse", "--verify", "HEAD"],
+        operation="resolve created commit",
+    ).stdout.strip()
+    return GitCommitResult(
+        commit=commit,
+        branch=status.branch,
+        message=message,
+        paths=tuple(paths),
+    )
+
+
 def repository_history(
     repository_path: str | Path,
     *,
@@ -275,6 +429,174 @@ def repository_history(
             )
         )
     return commits
+
+
+def list_remotes(repository_path: str | Path) -> list[GitRemote]:
+    """List local remote configuration with credential-bearing URL parts removed."""
+
+    root = discover_repository_root(repository_path)
+    names_result = _run_git(root, ["remote"], operation="list remotes")
+    remotes: list[GitRemote] = []
+    for name in sorted(line for line in names_result.stdout.splitlines() if line):
+        fetch = _run_git(
+            root,
+            ["remote", "get-url", "--all", "--", name],
+            operation="read remote fetch URLs",
+        )
+        push = _run_git(
+            root,
+            ["remote", "get-url", "--push", "--all", "--", name],
+            operation="read remote push URLs",
+        )
+        remotes.append(
+            GitRemote(
+                name=name,
+                fetch_urls=tuple(_sanitize_remote_url(url) for url in fetch.stdout.splitlines()),
+                push_urls=tuple(_sanitize_remote_url(url) for url in push.stdout.splitlines()),
+            )
+        )
+    return remotes
+
+
+def configure_remote(
+    repository_path: str | Path,
+    name: str,
+    url: str,
+    *,
+    replace: bool = False,
+) -> GitRemote:
+    """Add or explicitly replace one local remote URL without network access."""
+
+    root = discover_repository_root(repository_path)
+    _validate_remote_name(root, name)
+    _validate_remote_url(url)
+    existing = {remote.name for remote in list_remotes(root)}
+    if name in existing and not replace:
+        raise ArchRepoError(
+            ErrorCode.CONFLICT,
+            "Remote already exists; set replace=true to change it",
+            details={"remote": name},
+        )
+    if name in existing:
+        _run_git(
+            root,
+            ["remote", "set-url", "--", name, url],
+            operation="replace remote URL",
+        )
+    else:
+        _run_git(
+            root,
+            ["remote", "add", "--", name, url],
+            operation="add remote",
+        )
+    configured = next((remote for remote in list_remotes(root) if remote.name == name), None)
+    if configured is None:
+        raise ArchRepoError(ErrorCode.GIT_ERROR, "Configured remote could not be resolved")
+    return configured
+
+
+def _restore_branch(root: Path, branch_name: str) -> None:
+    try:
+        _run_git(
+            root,
+            ["switch", "--no-guess", branch_name],
+            operation="restore previous branch",
+        )
+    except ArchRepoError as exc:
+        raise ArchRepoError(
+            ErrorCode.GIT_ERROR,
+            "Target branch validation failed and the previous branch could not be restored",
+            details={"previous_branch": branch_name},
+        ) from exc
+
+
+def _permitted_changed_paths(
+    context: RepositoryContext,
+    status: GitStatus,
+) -> list[str]:
+    paths: set[str] = set()
+    for entry in status.entries:
+        entry_paths = [entry.path]
+        if entry.original_path is not None:
+            entry_paths.append(entry.original_path)
+        controlled = [_is_controlled_path(context, path) for path in entry_paths]
+        if any(controlled) and not all(controlled):
+            raise ArchRepoError(
+                ErrorCode.CONFLICT,
+                "Rename or copy crosses the DSL-controlled repository boundary",
+                details={"paths": entry_paths},
+            )
+        if all(controlled):
+            paths.update(entry_paths)
+    return sorted(paths)
+
+
+def _is_controlled_path(context: RepositoryContext, path: str) -> bool:
+    if not path or "\\" in path:
+        return False
+    relative = PurePosixPath(path)
+    if relative.is_absolute() or ".." in relative.parts or relative == PurePosixPath("."):
+        return False
+    if relative == context.declaration_path:
+        return True
+    if relative in {entity.files.template for entity in context.declaration.entities}:
+        return True
+    return sum(entity.matches(relative) for entity in context.declaration.entities) == 1
+
+
+def _validate_remote_name(root: Path, name: str) -> None:
+    if not name or name.startswith("-") or "\0" in name or "\n" in name or "\r" in name:
+        raise ArchRepoError(ErrorCode.VALIDATION_ERROR, "Remote name is not valid")
+    result = _run_git(
+        root,
+        ["check-ref-format", f"refs/remotes/{name}/validation"],
+        operation="validate remote name",
+        allowed_return_codes={1, 128},
+    )
+    if result.returncode != 0:
+        raise ArchRepoError(
+            ErrorCode.VALIDATION_ERROR,
+            "Remote name is not valid",
+            details={"remote": name},
+        )
+
+
+def _validate_remote_url(url: str) -> None:
+    if not url or "\0" in url or "\n" in url or "\r" in url:
+        raise ArchRepoError(ErrorCode.VALIDATION_ERROR, "Remote URL is not valid")
+    try:
+        parsed = urlsplit(url)
+        _ = parsed.port
+    except ValueError as exc:
+        raise ArchRepoError(ErrorCode.VALIDATION_ERROR, "Remote URL is not valid") from exc
+    if parsed.query or parsed.fragment:
+        raise ArchRepoError(
+            ErrorCode.VALIDATION_ERROR,
+            "Remote URL query and fragment components are not allowed",
+        )
+    if parsed.scheme.lower() in {"http", "https"} and (
+        parsed.username is not None or parsed.password is not None
+    ):
+        raise ArchRepoError(
+            ErrorCode.VALIDATION_ERROR,
+            "HTTP remote URL must not contain embedded credentials",
+        )
+
+
+def _sanitize_remote_url(url: str) -> str:
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme:
+            hostname = parsed.hostname or ""
+            if ":" in hostname and not hostname.startswith("["):
+                hostname = f"[{hostname}]"
+            port = f":{parsed.port}" if parsed.port is not None else ""
+            return urlunsplit((parsed.scheme, f"{hostname}{port}", parsed.path, "", ""))
+    except ValueError:
+        return "<redacted-invalid-url>"
+    if "@" in url:
+        return url.rsplit("@", maxsplit=1)[1]
+    return url
 
 
 def _validate_branch_name(root: Path, branch_name: str) -> None:
