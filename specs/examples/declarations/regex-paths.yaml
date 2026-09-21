@@ -9,10 +9,10 @@ entities:
     files:
       path:
         match: regex
-        value: "^systems/[^/]+/network-facts$"
+        value: '^systems/[^/]+/network-facts$'
       filename:
         match: regex
-        value: "^NF-[0-9]+\.md$"
+        value: '^NF-[0-9]+\.md$'
       format: markdown
       template: "templates/network-fact.md"
 
@@ -20,9 +20,9 @@ entities:
     files:
       path:
         match: regex
-        value: "^systems/[^/]+/regulatory-requirements$"
+        value: '^systems/[^/]+/regulatory-requirements$'
       filename:
         match: regex
-        value: "^REQ-[0-9]+\.md$"
+        value: '^REQ-[0-9]+\.md$'
       format: markdown
       template: "templates/regulatory-requirement.md"

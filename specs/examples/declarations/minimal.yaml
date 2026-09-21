@@ -10,6 +10,6 @@ entities:
         value: "facts"
       filename:
         match: regex
-        value: "^F-[0-9]{4}\.md$"
+        value: '^F-[0-9]{4}\.md$'
       format: markdown_front_matter
       template: "templates/fact.md"
