@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from arch_repo_mcp.entities import list_entities, read_entity, search_entities
+from arch_repo_mcp.entities import (
+    create_entity,
+    delete_entity,
+    list_entities,
+    read_entity,
+    search_entities,
+    update_entity,
+)
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
 from arch_repo_mcp.repository import (
     create_repository,
@@ -225,6 +232,86 @@ def test_entity_list_read_and_search_use_dsl_membership(tmp_path: Path) -> None:
     assert read["content"] == VALID_MARKDOWN
     assert [item.path for item in searched] == ["facts/F-0001.md"]
     assert searched[0].matching_lines == (5,)
+
+
+def test_entity_create_copies_template_without_committing(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+
+    created = create_entity(repository, "fact", "facts/F-0002.md")
+
+    assert created.path == "facts/F-0002.md"
+    assert (repository / created.path).read_text(encoding="utf-8") == VALID_MARKDOWN
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout
+    assert "facts/" in status
+    head = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert head.returncode != 0
+
+
+def test_entity_create_recreates_valid_missing_parent_directory(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+    (repository / "facts" / "F-0001.md").unlink()
+    (repository / "facts").rmdir()
+
+    created = create_entity(repository, "fact", "facts/F-0002.md")
+
+    assert created.path == "facts/F-0002.md"
+    assert (repository / "facts").is_dir()
+
+
+def test_entity_create_rejects_existing_file(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+
+    with pytest.raises(ArchRepoError) as captured:
+        create_entity(repository, "fact", "facts/F-0001.md")
+
+    assert captured.value.code is ErrorCode.CONFLICT
+
+
+def test_entity_update_replaces_valid_content(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+    updated_content = VALID_MARKDOWN.replace("local.", "validated locally.")
+
+    updated = update_entity(repository, "fact", "facts/F-0001.md", updated_content)
+
+    assert updated.path == "facts/F-0001.md"
+    assert (repository / updated.path).read_text(encoding="utf-8") == updated_content
+
+
+def test_entity_update_rolls_back_invalid_content(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+    entity_path = repository / "facts" / "F-0001.md"
+
+    with pytest.raises(ArchRepoError) as captured:
+        update_entity(repository, "fact", "facts/F-0001.md", "missing front matter")
+
+    assert captured.value.code is ErrorCode.VALIDATION_ERROR
+    assert entity_path.read_text(encoding="utf-8") == VALID_MARKDOWN
+    assert validate_repository(repository).valid
+
+
+def test_entity_delete_removes_only_local_file(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+
+    deleted = delete_entity(repository, "fact", "facts/F-0001.md")
+
+    assert deleted == {"entity": "fact", "path": "facts/F-0001.md"}
+    assert not (repository / "facts" / "F-0001.md").exists()
+    assert (repository / "facts").is_dir()
+    assert validate_repository(repository).valid
 
 
 def test_entity_read_rejects_path_traversal(tmp_path: Path) -> None:

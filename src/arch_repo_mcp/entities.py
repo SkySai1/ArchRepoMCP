@@ -1,15 +1,22 @@
-"""Read-only entity operations resolved exclusively through the repository DSL."""
+"""Entity operations resolved exclusively through the repository DSL."""
 
 from __future__ import annotations
 
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from arch_repo_mcp.dsl import EntityDefinition
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
-from arch_repo_mcp.repository import DEFAULT_DECLARATION_PATH, RepositoryContext, open_repository
+from arch_repo_mcp.repository import (
+    DEFAULT_DECLARATION_PATH,
+    RepositoryContext,
+    RepositoryValidationReport,
+    open_repository,
+    validate_repository,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +47,121 @@ class EntitySearchMatch:
             "path": self.path,
             "matching_lines": list(self.matching_lines),
         }
+
+
+def create_entity(
+    repository_path: str | Path,
+    entity_name: str,
+    entity_path: str,
+    declaration_path: str = DEFAULT_DECLARATION_PATH,
+) -> EntityRecord:
+    """Create one local entity from its declared template without committing it."""
+
+    context = open_repository(repository_path, declaration_path)
+    entity = _require_entity(context, entity_name)
+    relative, target = _resolve_new_entity_path(context, entity, entity_path)
+    template = context.root.joinpath(*entity.files.template.parts)
+    try:
+        content = template.read_bytes()
+        template_mode = template.stat().st_mode
+    except OSError as exc:
+        raise ArchRepoError(
+            ErrorCode.INVALID_REPOSITORY,
+            "Entity template could not be read",
+            details={"path": entity.files.template.as_posix()},
+        ) from exc
+
+    created_directories = _create_parent_directories(context.root, target.parent)
+    try:
+        _atomic_write(target, content, mode=template_mode)
+        report = validate_repository(context.root, context.declaration_path.as_posix())
+        if not report.valid:
+            _remove_created_entity(target, created_directories)
+            _raise_mutation_validation("creation", report)
+    except ArchRepoError:
+        _remove_created_entity(target, created_directories)
+        raise
+    except OSError as exc:
+        _remove_created_entity(target, created_directories)
+        raise ArchRepoError(
+            ErrorCode.PERMISSION_DENIED,
+            "Entity file could not be created",
+            details={"path": relative.as_posix()},
+        ) from exc
+    return _record(context.root, entity, target)
+
+
+def update_entity(
+    repository_path: str | Path,
+    entity_name: str,
+    entity_path: str,
+    content: str,
+    declaration_path: str = DEFAULT_DECLARATION_PATH,
+) -> EntityRecord:
+    """Replace one local entity and roll back if repository validation fails."""
+
+    context = open_repository(repository_path, declaration_path)
+    entity = _require_entity(context, entity_name)
+    relative, target = _resolve_entity_path(context, entity, entity_path)
+    try:
+        replacement = content.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ArchRepoError(
+            ErrorCode.VALIDATION_ERROR, "Entity content is not valid UTF-8 text"
+        ) from exc
+    try:
+        original = target.read_bytes()
+        original_mode = target.stat().st_mode
+        _atomic_write(target, replacement, mode=original_mode)
+    except OSError as exc:
+        raise ArchRepoError(
+            ErrorCode.PERMISSION_DENIED,
+            "Entity file could not be updated",
+            details={"path": relative.as_posix()},
+        ) from exc
+
+    try:
+        report = validate_repository(context.root, context.declaration_path.as_posix())
+    except ArchRepoError:
+        _restore_entity(target, original, original_mode, relative)
+        raise
+    if not report.valid:
+        _restore_entity(target, original, original_mode, relative)
+        _raise_mutation_validation("update", report)
+    return _record(context.root, entity, target)
+
+
+def delete_entity(
+    repository_path: str | Path,
+    entity_name: str,
+    entity_path: str,
+    declaration_path: str = DEFAULT_DECLARATION_PATH,
+) -> dict[str, str]:
+    """Delete one local entity and roll back if repository validation fails."""
+
+    context = open_repository(repository_path, declaration_path)
+    entity = _require_entity(context, entity_name)
+    relative, target = _resolve_entity_path(context, entity, entity_path)
+    try:
+        original = target.read_bytes()
+        original_mode = target.stat().st_mode
+        target.unlink()
+    except OSError as exc:
+        raise ArchRepoError(
+            ErrorCode.PERMISSION_DENIED,
+            "Entity file could not be deleted",
+            details={"path": relative.as_posix()},
+        ) from exc
+
+    try:
+        report = validate_repository(context.root, context.declaration_path.as_posix())
+    except ArchRepoError:
+        _restore_entity(target, original, original_mode, relative)
+        raise
+    if not report.valid:
+        _restore_entity(target, original, original_mode, relative)
+        _raise_mutation_validation("deletion", report)
+    return {"entity": entity.name, "path": relative.as_posix()}
 
 
 def list_entities(
@@ -153,11 +275,11 @@ def _entity_paths(context: RepositoryContext, entity: EntityDefinition) -> list[
     return sorted(paths, key=lambda item: item.relative_to(context.root).as_posix())
 
 
-def _resolve_entity_path(
+def _validate_entity_relative_path(
     context: RepositoryContext,
     entity: EntityDefinition,
     entity_path: str,
-) -> tuple[PurePosixPath, Path]:
+) -> PurePosixPath:
     if not entity_path or "\\" in entity_path:
         raise ArchRepoError(
             ErrorCode.VALIDATION_ERROR,
@@ -180,6 +302,31 @@ def _resolve_entity_path(
             "Path is reserved for repository metadata or a template",
             details={"path": entity_path},
         )
+    return relative
+
+
+def _resolve_new_entity_path(
+    context: RepositoryContext,
+    entity: EntityDefinition,
+    entity_path: str,
+) -> tuple[PurePosixPath, Path]:
+    relative = _validate_entity_relative_path(context, entity, entity_path)
+    target = context.root.joinpath(*relative.parts)
+    if target.exists() or target.is_symlink():
+        raise ArchRepoError(
+            ErrorCode.CONFLICT,
+            "Entity file already exists",
+            details={"path": relative.as_posix()},
+        )
+    return relative, target
+
+
+def _resolve_entity_path(
+    context: RepositoryContext,
+    entity: EntityDefinition,
+    entity_path: str,
+) -> tuple[PurePosixPath, Path]:
+    relative = _validate_entity_relative_path(context, entity, entity_path)
 
     candidate = context.root.joinpath(*relative.parts)
     try:
@@ -205,6 +352,80 @@ def _resolve_entity_path(
             details={"path": entity_path},
         )
     return relative, absolute
+
+
+def _create_parent_directories(root: Path, parent: Path) -> list[Path]:
+    missing: list[Path] = []
+    current = parent
+    while current != root and not current.exists():
+        missing.append(current)
+        current = current.parent
+    if not current.is_relative_to(root) or current.is_symlink():
+        raise ArchRepoError(
+            ErrorCode.PERMISSION_DENIED, "Entity parent path is not confined to the repository"
+        )
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ArchRepoError(
+            ErrorCode.PERMISSION_DENIED, "Entity parent directory could not be created"
+        ) from exc
+    return missing
+
+
+def _atomic_write(path: Path, content: bytes, *, mode: int | None = None) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if mode is not None:
+            os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _remove_created_entity(target: Path, created_directories: list[Path]) -> None:
+    try:
+        if target.exists() or target.is_symlink():
+            target.unlink()
+        for directory in created_directories:
+            if directory.exists():
+                directory.rmdir()
+    except OSError as exc:
+        raise ArchRepoError(
+            ErrorCode.INVALID_REPOSITORY,
+            "Failed to roll back entity creation",
+            details={"path": target.name},
+        ) from exc
+
+
+def _restore_entity(target: Path, content: bytes, mode: int, relative: PurePosixPath) -> None:
+    try:
+        _atomic_write(target, content, mode=mode)
+    except OSError as exc:
+        raise ArchRepoError(
+            ErrorCode.INVALID_REPOSITORY,
+            "Failed to restore entity after validation error",
+            details={"path": relative.as_posix()},
+        ) from exc
+
+
+def _raise_mutation_validation(
+    operation: str,
+    report: RepositoryValidationReport,
+) -> None:
+    raise ArchRepoError(
+        ErrorCode.VALIDATION_ERROR,
+        f"Entity {operation} did not pass repository validation",
+        details=report.as_dict(),
+    )
 
 
 def _record(root: Path, entity: EntityDefinition, path: Path) -> EntityRecord:
