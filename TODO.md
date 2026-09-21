@@ -19,6 +19,8 @@
 
 ## Текущий обязательный этап
 
+- [ ] [MUST] Создать MCP tool формирующий goverment репозиторий с описанием dsl структы из dsl/architecture.yaml
+- [ ] [MUST] Настроить работу с переменной окружения хранения корневой директории, передаваемой от агента в том числе, внутри которой существуют все репозитории. 
 - [ ] [MUST] Разделять transport failures на `AUTHENTICATION_ERROR`,
   `PERMISSION_DENIED`, `NETWORK_ERROR`, `TLS_ERROR`, `TIMEOUT`, `NOT_FOUND` и
   `PROVIDER_CAPABILITY_GAP` без возврата чувствительного stderr.
