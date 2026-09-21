@@ -25,6 +25,7 @@ declaration:
   version: v2
 entities:
   - name: fact
+    description: A verified architecture fact.
     files:
       path: {match: exact, value: facts}
       filename: {match: regex, value: '^F-[0-9]{4}\\.md$'}

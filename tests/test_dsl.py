@@ -82,6 +82,7 @@ declaration:
   version: v2
 entities:
   - name: fact
+    description: A verified architecture fact.
     relations: [missing, missing]
     files:
       path: {match: exact, value: facts}
@@ -108,6 +109,7 @@ declaration:
   version: v2
 entities:
   - name: fact
+    description: A verified architecture fact.
     files:
       path: {{match: exact, value: facts}}
       filename: {{match: exact, value: F-0001.md}}
@@ -145,4 +147,3 @@ entities:
     assert any(
         issue["code"] == "DUPLICATE_ENTITY" for issue in captured.value.details["issues"]
     )
-

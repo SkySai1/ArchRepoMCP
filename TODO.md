@@ -19,10 +19,10 @@
 
 ## Текущий обязательный этап
 
-- [ ] [MUST] Создать MCP tool формирующий goverment репозиторий с описанием dsl структы из dsl/architecture.yaml
-- [ ] [MUST] Настроить работу с переменной окружения хранения корневой директории, передаваемой от агента в том числе, внутри которой существуют все репозитории. 
-- [ ] [MUST] Добавить MCP-инструмент repository_describe или entity_describe, позволяющий AI-агенту получить полное описание модели управляемого repository.
-- [ ] [MUST] Для каждой DSL entity возвращать:
+- [x] Создать MCP tool, формирующий government repository с описанием DSL-структуры из `specs/dsl/architecture.yaml`.
+- [x] Настроить workspace через stdio-аргумент, process environment или `.env`; все MCP repository paths разрешаются внутри настроенного workspace.
+- [x] Добавить MCP-инструмент `repository_describe`, позволяющий AI-агенту получить полное описание модели управляемого repository.
+- [x] Для каждой DSL entity возвращать:
   name;
   description;
   семантическое назначение entity;
@@ -32,9 +32,11 @@
   format;
   путь к template;
   содержимое template.
-- [ ] [MUST] Обеспечить возможность AI-агенту перед обработкой исходных документов получить модель repository через MCP и использовать её как единственный источник правил классификации и создания entities.
-- [ ] [MUST] Добавить contract tests для нового MCP-инструмента и проверку соответствия возвращаемого описания фактической DSL-декларации и templates.
-- [ ] [MUST] Добавить integration test сценария: исходное техническое задание → анализ AI-агентом → классификация информации по entity types → создание файлов через entity_create / entity_update согласно DSL и templates.
+- [x] Обеспечить возможность AI-агенту перед обработкой исходных документов получить модель repository через MCP и использовать её как единственный источник правил классификации и создания entities.
+- [x] Добавить `repository_list`: government repository исключается из рабочих, совместимость модели отображается явно, а entity-tools требуют выбранный `repository_path`.
+- [x] Добавить contract tests для нового MCP-инструмента и проверку соответствия возвращаемого описания фактической DSL-декларации и templates.
+- [x] Добавить integration test сценария: исходное техническое задание → анализ AI-агентом → классификация информации по entity types → создание файлов через entity_create / entity_update согласно DSL и templates.
+- [x] Добавить instance-level связи в front matter (`relations[].entity` + `files[]`) и MCP-инструмент `entity_read_related`; DSL при этом содержит только допустимые entity types, а отсутствующий target возвращается как валидная связь со статусом `missing`.
 
 ## Следующий обязательный этап
 

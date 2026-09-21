@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 
 from arch_repo_mcp.dsl import ValidationIssue, load_declaration
-from arch_repo_mcp.entities import EntityRecord, EntitySearchMatch
+from arch_repo_mcp.entities import EntityRecord, EntitySearchMatch, RelatedEntityRecord
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
 from arch_repo_mcp.local_git import (
     GitBranch,
@@ -84,9 +84,56 @@ def _result_samples() -> dict[str, object]:
     entity = EntityRecord("fact", "facts/F-0001.md", "markdown", 10).as_dict()
     read_entity = {**entity, "content": "content"}
     search = EntitySearchMatch("fact", "facts/F-0001.md", (1,)).as_dict()
+    relation = RelatedEntityRecord(
+        source_entity="fact",
+        source_path="facts/F-0001.md",
+        entity="category",
+        filename="C-0001.md",
+        relation_valid=True,
+        found=False,
+        status="missing",
+        path=None,
+        expected_path="categories/C-0001.md",
+        candidate_paths=(),
+        format="markdown_front_matter",
+        content=None,
+    ).as_dict()
 
     repository = _repository_result(context)
+    described_entity = {
+        "name": "fact",
+        "description": "A verified architecture fact.",
+        "semantic_purpose": "A verified architecture fact.",
+        "relations": [],
+        "path_rule": {"match": "exact", "value": "facts"},
+        "filename_rule": {"match": "regex", "value": r"^F-[0-9]{4}\.md$"},
+        "format": "markdown_front_matter",
+        "template_path": "templates/fact.md",
+        "template_content": "---\ntitle: Example\n---\n",
+    }
     return {
+        "government_repository_initialize": {
+            "workspace_root": "workspace",
+            "government_repository_root": "workspace/government",
+            "created": True,
+            "declaration_path": "architecture.yaml",
+            "declaration": {"kind": "architecture_repository", "version": "v2"},
+            "entities": ["fact"],
+        },
+        "repository_describe": {
+            "workspace_root": "workspace",
+            "government_repository_root": "workspace/government",
+            "declaration_path": "architecture.yaml",
+            "declaration_source": "workspace/government/architecture.yaml",
+            "declaration": {"kind": "architecture_repository", "version": "v2"},
+            "workflow": {},
+            "entities": [described_entity],
+        },
+        "repository_list": {
+            "workspace_root": "workspace",
+            "government_repository_root": "workspace/government",
+            "repositories": [],
+        },
         "repository_create": repository,
         "repository_open": repository,
         "repository_validate": validation,
@@ -114,6 +161,10 @@ def _result_samples() -> dict[str, object]:
         "entity_list": [entity],
         "entity_create": entity,
         "entity_read": read_entity,
+        "entity_read_related": {
+            "source": {"entity": "fact", "path": "facts/F-0001.md"},
+            "relations": [relation],
+        },
         "entity_update": entity,
         "entity_delete": {"entity": "fact", "path": "facts/F-0001.md"},
         "entity_search": [search],

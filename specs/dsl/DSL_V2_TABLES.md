@@ -37,7 +37,7 @@
 | C12 | relation           | Entity-level semantic relation | Связь объявляется между типами сущностей, а не между конкретными экземплярами                                                     |
 | C13 | relation           | No instance inference          | Наличие связи не означает, что каждый экземпляр source связан с каждым экземпляром target                                         |
 | C14 | relation           | Traversable                    | MCP может использовать связь для определения типов сущностей, которые следует изучить совместно                                   |
-| C15 | relation           | No content schema              | DSL не определяет, где внутри файла хранится ссылка на конкретный экземпляр                                                       |
+| C15 | relation           | Type-level declaration         | DSL содержит только имена допустимых связанных entity types и не содержит имён файлов                                             |
 | C16 | relation           | No cardinality                 | `one/many` отсутствуют; фактическая множественность определяется содержимым экземпляров                                           |
 | C17 | entity instance    | One file = one instance        | Каждый matched-файл является одним экземпляром сущности                                                                           |
 | C18 | `path`             | Parent path selector           | Сопоставляется repository-relative parent path                                                                                    |
@@ -61,3 +61,41 @@
 | C36 | `description`      | Required                       | Каждая entity обязана содержать `description`                                                                                     |
 | C37 | `description`      | Arbitrary text                 | Значение является произвольным текстом и не ограничивается реестром фиксированных значений                                        |
 | C38 | `description`      | Entity semantics               | Описание определяет смысл и назначение типа сущности для человека и AI-агента; оно не изменяет правила file matching или хранения |
+| C39 | instance relation  | Front matter only              | Ссылки на конкретные файлы задаются только в `relations` front matter экземпляра `markdown_front_matter`                          |
+| C40 | relation group     | `entity`, `files`              | Каждый элемент `relations` содержит имя одного связанного entity type и массив имён файлов                                        |
+| C41 | relation entity    | DSL-governed                   | `relations[].entity` обязан присутствовать в `entity.relations` исходного типа                                                     |
+| C42 | relation filename  | Basename only                  | `relations[].files[]` содержит filename без directory path                                                                        |
+| C43 | relation filename  | Target selector                | Filename обязан соответствовать `files.filename` связанного entity type                                                           |
+| C44 | missing target     | Valid dangling relation        | Отсутствующий файл не делает repository невалидным; чтение связи возвращает `relation_valid=true`, `found=false`, `status=missing` |
+| C45 | relation groups    | Optional                       | Отсутствующий `relations` означает отсутствие instance-level ссылок                                                               |
+| C46 | empty group        | Allowed                        | Пустой `files` означает, что связь с типом разрешена DSL, но ссылки на экземпляры не установлены                                  |
+| C47 | duplicate entries  | Forbidden                      | Entity groups и filenames внутри одной group должны быть уникальны                                                                |
+
+# Ссылки между экземплярами
+
+DSL-декларация определяет только допустимые направления связей:
+
+```yaml
+- name: fact
+  relations:
+    - requirement
+    - category
+```
+
+Имена конкретных файлов в DSL не указываются. Они находятся во front matter экземпляра:
+
+```yaml
+relations:
+  - entity: requirement
+    files:
+      - R-0001.md
+  - entity: category
+    files:
+      - C-0001.md
+      - C-0002.md
+```
+
+Наличие файла проверяется во время чтения связей, а не при repository validation. Поэтому
+корректно типизированная ссылка может временно указывать на отсутствующий файл. Если path
+selector связанного entity допускает несколько файлов с одинаковым basename, инструмент
+чтения не выбирает один неявно и возвращает состояние `ambiguous` со списком кандидатов.

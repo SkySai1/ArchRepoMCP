@@ -3,12 +3,6 @@ declaration:
   version: v2
 
 entities:
-
-  # ============================================================
-  # FACTS
-  # Факты о существующей или проектируемой архитектуре
-  # ============================================================
-
   - name: fact
     description: >
       Факт о существующей или проектируемой архитектуре: компоненте, интерфейсе, технологии, настройке, характеристике или ином установленном свойстве системы.
@@ -16,25 +10,15 @@ entities:
       - requirement
       - category
       - architecture_artifact
-
     files:
       path:
         match: exact
         value: "facts"
-
       filename:
         match: regex
         value: '^F-[0-9]{4}\.md$'
-
       format: markdown_front_matter
-
       template: "templates/fact.md"
-
-
-  # ============================================================
-  # REQUIREMENTS
-  # Требования к архитектуре: ТЗ, НПА, внутренние требования
-  # ============================================================
 
   - name: requirement
     description: >
@@ -42,50 +26,30 @@ entities:
     relations:
       - category
       - architecture_artifact
-
     files:
       path:
         match: exact
         value: "requirements"
-
       filename:
         match: regex
         value: '^R-[0-9]{4}\.md$'
-
       format: markdown_front_matter
-
       template: "templates/requirement.md"
-
-
-  # ============================================================
-  # ARCHITECTURE ARTIFACTS
-  # Архитектурные документы, схемы и иные артефакты
-  # ============================================================
 
   - name: architecture_artifact
     description: >
       Архитектурный документ, схема, модель или иной артефакт, описывающий устройство, поведение или решения системы.
     relations:
       - category
-
     files:
       path:
         match: exact
         value: "artifacts"
-
       filename:
         match: regex
         value: '^A-[0-9]{4}\.md$'
-
       format: markdown_front_matter
-
       template: "templates/artifact.md"
-
-
-  # ============================================================
-  # CATEGORIES
-  # Классификация требований, фактов и артефактов
-  # ============================================================
 
   - name: category
     description: >
@@ -94,11 +58,8 @@ entities:
       path:
         match: exact
         value: "categories"
-
       filename:
         match: regex
         value: '^C-[0-9]{4}\.md$'
-
       format: markdown_front_matter
-
       template: "templates/category.md"

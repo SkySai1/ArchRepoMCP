@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from arch_repo_mcp.dsl import (
+    EntityDefinition,
     FileFormat,
     MatchMode,
     RepositoryDeclaration,
@@ -21,6 +22,7 @@ from arch_repo_mcp.dsl import (
     load_declaration,
 )
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
+from arch_repo_mcp.relation_model import parse_relation_groups
 
 DEFAULT_DECLARATION_PATH = "architecture.yaml"
 _GIT_TIMEOUT_SECONDS = 10
@@ -458,6 +460,15 @@ def _validate_loaded_repository(
         )
         if format_issue is not None:
             issues.append(format_issue)
+        elif entity.files.format is FileFormat.MARKDOWN_FRONT_MATTER:
+            issues.extend(
+                _validate_relation_file(
+                    resolved_template,
+                    entity,
+                    declaration,
+                    template_path,
+                )
+            )
 
     for relative_path, absolute_path, symlink in _walk_repository_files(root, issues):
         if relative_path == declaration_path:
@@ -497,6 +508,15 @@ def _validate_loaded_repository(
         )
         if format_issue is not None:
             issues.append(format_issue)
+        elif entity.files.format is FileFormat.MARKDOWN_FRONT_MATTER:
+            issues.extend(
+                _validate_relation_file(
+                    absolute_path,
+                    entity,
+                    declaration,
+                    relative_path.as_posix(),
+                )
+            )
 
     return _report(root, declaration_path.as_posix(), counts, issues)
 
@@ -570,6 +590,20 @@ def _validate_file_format(
             f"file is not valid {file_format.value}: {exc}",
         )
     return None
+
+
+def _validate_relation_file(
+    path: Path,
+    entity: EntityDefinition,
+    declaration: RepositoryDeclaration,
+    display_path: str,
+) -> tuple[ValidationIssue, ...]:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return ()
+    _, issues = parse_relation_groups(content, entity, declaration, display_path)
+    return issues
 
 
 def _parse_front_matter(text: str) -> Any:

@@ -12,6 +12,7 @@ def test_expected_mcp_tools_are_registered() -> None:
     assert {tool.name for tool in tools} == {
         "branch_create",
         "branch_switch",
+        "government_repository_initialize",
         "remote_configure",
         "repository_create",
         "repository_branches",
@@ -19,7 +20,9 @@ def test_expected_mcp_tools_are_registered() -> None:
         "repository_diff",
         "repository_fetch",
         "repository_history",
+        "repository_list",
         "repository_commit",
+        "repository_describe",
         "repository_open",
         "repository_publish",
         "repository_pull",
@@ -30,6 +33,7 @@ def test_expected_mcp_tools_are_registered() -> None:
         "entity_delete",
         "entity_list",
         "entity_read",
+        "entity_read_related",
         "entity_search",
         "entity_update",
     }

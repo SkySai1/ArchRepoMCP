@@ -27,6 +27,7 @@ declaration:
   version: v2
 entities:
   - name: fact
+    description: A verified architecture fact.
     files:
       path: {match: exact, value: facts}
       filename: {match: regex, value: '^F-[0-9]{4}\\.md$'}
@@ -194,6 +195,7 @@ def test_matching_overlap_is_reported(tmp_path: Path) -> None:
     repository = _make_repository(tmp_path)
     overlap = DECLARATION + """\
   - name: duplicate_fact
+    description: A duplicate architecture fact.
     files:
       path: {match: exact, value: facts}
       filename: {match: regex, value: '^F-[0-9]{4}\\.md$'}
@@ -301,6 +303,31 @@ def test_entity_update_rolls_back_invalid_content(tmp_path: Path) -> None:
     assert captured.value.code is ErrorCode.VALIDATION_ERROR
     assert entity_path.read_text(encoding="utf-8") == VALID_MARKDOWN
     assert validate_repository(repository).valid
+
+
+def test_entity_update_rejects_relation_not_allowed_by_dsl(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+    invalid_relation = """---
+title: Invalid relation
+relations:
+  - entity: requirement
+    files: [R-0001.md]
+---
+
+This relation is not declared by the source entity.
+"""
+
+    with pytest.raises(ArchRepoError) as captured:
+        update_entity(repository, "fact", "facts/F-0001.md", invalid_relation)
+
+    assert captured.value.code is ErrorCode.VALIDATION_ERROR
+    assert any(
+        issue["code"] == "RELATION_NOT_ALLOWED"
+        for issue in captured.value.details["issues"]
+    )
+    assert (repository / "facts" / "F-0001.md").read_text(
+        encoding="utf-8"
+    ) == VALID_MARKDOWN
 
 
 def test_entity_delete_removes_only_local_file(tmp_path: Path) -> None:

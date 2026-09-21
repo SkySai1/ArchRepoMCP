@@ -4,39 +4,41 @@ MCP-сервер для локального управления архитек
 сущностей задаётся декларацией DSL, а удалённые Git-сервисы рассматриваются только как
 явный контур синхронизации.
 
-Проект находится на ранней стадии разработки. Текущий вертикальный срез уже позволяет
-AI-агенту создать, открыть и проверить локальный repository, управлять DSL-сущностями и
-исследовать локальное Git-состояние. Доступ к remote выполняется только через отдельные
-явные операции clone, fetch и publish; остальные возможности полностью работают offline.
+Текущий MVP позволяет AI-агенту сначала получить из government repository полную модель
+сущностей и шаблоны, затем явно выбрать рабочий repository и локально управлять его
+содержимым. Доступ к remote выполняется только через отдельные явные операции; остальные
+возможности полностью работают offline.
 
 ## Реализовано
 
 - строгий parser и validator DSL `architecture_repository/v2`;
+- обязательное семантическое `description` для каждого entity type;
 - закрытая грамматика, проверка presets, relations, regex и duplicate YAML keys;
 - обнаружение корня локального Git repository без сетевых операций;
 - repository confinement и запрет symbolic-link обходов;
 - проверка templates, конфликтов file matching и форматов файлов;
 - безопасное создание repository из декларации и её template bundle;
+- автоматически создаваемый government repository со встроенным нормативным preset;
+- описание AI-facing модели через `repository_describe` и явный выбор через `repository_list`;
+- единый локальный workspace, настраиваемый через stdio, environment или `.env`;
 - Entity Service: `list`, `read`, `search`, `create`, `update`, `delete`;
 - rollback entity mutations, не прошедших полную repository validation;
 - Local Git Service: `status`, `diff`, `history`, `commit`, branches и remotes;
-- Remote Sync Service: явные `clone`, `fetch` и `publish` через Git transport;
+- Remote Sync Service: явные `clone`, `fetch`, безопасный fast-forward `pull` и `publish`;
 - MCP server на официальном Python SDK v2 со stdio transport;
 - нормализованная модель ошибок;
 - автоматические DSL, repository, entity, local Git, remote sync и MCP contract tests.
-
-Пока не реализованы pull/integration полученных изменений и Forgejo provider. Безопасная
-интеграция будет добавлена отдельно после проверки fetched tree до изменения working tree.
 
 ## Архитектура текущего среза
 
 ```text
 MCP tools
    │
-   ├── Repository Service ── create / open / validate
+   ├── Government Model ───── initialize / describe / list repositories
+   ├── Repository Service ─── create / open / validate
    ├── Entity Service ────── list / read / search / create / update / delete
    ├── Local Git Service ─── status / diff / history / commit / branches / remotes
-   └── Remote Sync Service ─ clone / fetch / publish
+   └── Remote Sync Service ── clone / fetch / pull / publish
                 │                         │
                 ├── DSL v2 Engine         └── explicit Git transport
                 │
@@ -85,13 +87,17 @@ arch-repo-mcp
 python -m arch_repo_mcp.server
 ```
 
-Для MCP host команда настраивается как stdio server. Минимальный пример конфигурации:
+Для MCP host команда настраивается как stdio server. Рекомендуемый пример конфигурации:
 
 ```json
 {
   "mcpServers": {
     "arch-repo": {
-      "command": "arch-repo-mcp"
+      "command": "arch-repo-mcp",
+      "env": {
+        "ARCH_REPO_MCP_WORKSPACE": "D:\\ArchitectureRepositories",
+        "ARCH_REPO_MCP_GOVERNMENT_REPOSITORY": "government"
+      }
     }
   }
 }
@@ -100,10 +106,36 @@ python -m arch_repo_mcp.server
 Конкретный формат файла конфигурации зависит от MCP host. Команда должна запускаться в
 окружении, где установлен пакет `arch-repo-mcp`.
 
+### Workspace и `.env`
+
+`ARCH_REPO_MCP_WORKSPACE` задаёт локальную директорию, внутри которой находятся government
+и все рабочие repositories. `ARCH_REPO_MCP_GOVERNMENT_REPOSITORY` задаёт абсолютный путь
+внутри workspace либо относительный путь; значение по умолчанию — `government`.
+
+Те же значения можно сохранить в `.env` текущей директории процесса:
+
+```dotenv
+ARCH_REPO_MCP_WORKSPACE=D:/ArchitectureRepositories
+ARCH_REPO_MCP_GOVERNMENT_REPOSITORY=government
+```
+
+Другой env-файл выбирается через `ARCH_REPO_MCP_ENV_FILE`. Для
+`government_repository_initialize`, `repository_describe` и `repository_list` значения
+можно передать непосредственно по stdio в аргументах `workspace_path`,
+`government_repository_path` и `env_file`. Приоритет: stdio-аргумент, process environment,
+`.env`, затем документированное имя government repository по умолчанию.
+
+Если workspace настроен, относительные `repository_path` и `target_path` разрешаются внутри
+него, а выход за его границы отклоняется. Entity tools дополнительно запрещают использовать
+government repository как рабочий.
+
 ## MCP tools
 
 | Tool | Назначение |
 | --- | --- |
+| `government_repository_initialize` | Открыть или создать government repository из встроенного DSL preset |
+| `repository_describe` | Получить entity semantics, relations, file rules и полное содержимое templates |
+| `repository_list` | Получить рабочие repositories для явного выбора `repository_path` |
 | `repository_create` | Создать локальный Git repository из DSL declaration bundle |
 | `repository_open` | Открыть и полностью проверить локальный architecture repository |
 | `repository_validate` | Получить детальный validation report без изменения repository |
@@ -118,10 +150,12 @@ python -m arch_repo_mcp.server
 | `remote_configure` | Добавить или явно заменить remote без сетевого запроса |
 | `repository_clone` | Явно клонировать remote и создать target только после validation |
 | `repository_fetch` | Явно получить refs без изменения index и working tree |
+| `repository_pull` | Выполнить только валидированный fast-forward из clean state |
 | `repository_publish` | Валидировать и явно отправить текущий `HEAD` без force push |
 | `entity_create` | Создать entity из объявленного template |
 | `entity_list` | Получить список экземпляров указанного DSL entity |
 | `entity_read` | Прочитать один экземпляр по repository-relative path |
+| `entity_read_related` | Прочитать связанные файлы по DSL и front matter исходной entity |
 | `entity_search` | Найти текст во всех или в указанном типе entity |
 | `entity_update` | Локально заменить entity с validation и rollback |
 | `entity_delete` | Локально удалить entity с validation и rollback |
@@ -153,6 +187,18 @@ DSL validation и остаётся доступен для диагностик�
 }
 ```
 
+### Сценарий AI-агента
+
+1. Вызвать `repository_describe`; отсутствующий government repository будет создан из
+   встроенных `architecture.yaml` и templates без commit или remote.
+2. Использовать возвращённые `description`, `relations`, `path_rule`, `filename_rule`,
+   `format` и `template_content` как источник правил классификации исходного текста.
+3. Вызвать `repository_list`, выбрать только валидный repository с
+   `model_matches_government=true` и явно передавать его `repository_path` во все entity tools.
+4. Для каждого результата классификации вызвать `entity_create`, затем `entity_update` с
+   полным UTF-8 содержимым по шаблону.
+5. Отдельно проверить изменения и при необходимости явно выполнить commit/publish.
+
 ### Создание repository
 
 `repository_create` принимает отсутствующий `target_path` и путь к исходной DSL-декларации
@@ -169,6 +215,23 @@ staging-каталоге выполняется `git init`, и только ва
 `entity_update` принимает полное новое UTF-8 содержимое. Все три mutation tools оставляют
 изменения только в working tree, выполняют полную validation и восстанавливают исходное
 состояние при ошибке. Commit или push автоматически не выполняются.
+
+DSL `relations` содержит только имена допустимых связанных entity types. Ссылки на экземпляры
+хранятся исключительно во front matter конкретного файла:
+
+```yaml
+relations:
+  - entity: category
+    files:
+      - C-0001.md
+```
+
+`entity_read_related` проверяет направление связи по DSL и filename по правилу целевой
+entity. Найденный файл возвращается вместе с содержимым. Для корректной ссылки на
+отсутствующий файл возвращаются `relation_valid=true`, `found=false`, `status=missing` и,
+когда path selector точный, ожидаемый `expected_path`. Отсутствие target не делает repository
+невалидным. При нескольких подходящих файлах возвращается `status=ambiguous` и
+`candidate_paths`; неявный выбор не выполняется.
 
 ### Local Git operations
 
@@ -204,8 +267,9 @@ working tree. Получение tags и prune отключены по умол�
 HTTP(S) URL со встроенными credentials, query или fragment запрещены также для clone;
 секреты следует передавать средствами окружения и Git credential helper вне MCP-ответов.
 
-Pull пока намеренно отсутствует: integration fetched commit будет реализована только с
-предварительной validation целевого дерева и без автоматического разрешения конфликтов.
+`repository_pull` доступен только для clean working tree и fast-forward history. Fetched tree
+валидируется до изменения текущей ветки; divergence, invalid tree и конфликты отклоняются без
+implicit stash, reset, rebase или автоматического разрешения конфликтов.
 
 ## Минимальная DSL-декларация
 

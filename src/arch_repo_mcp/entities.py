@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from arch_repo_mcp.dsl import EntityDefinition
+from arch_repo_mcp.dsl import EntityDefinition, FileFormat, MatchMode
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
+from arch_repo_mcp.relation_model import parse_relation_groups
 from arch_repo_mcp.repository import (
     DEFAULT_DECLARATION_PATH,
     RepositoryContext,
@@ -47,6 +48,134 @@ class EntitySearchMatch:
             "path": self.path,
             "matching_lines": list(self.matching_lines),
         }
+
+
+@dataclass(frozen=True, slots=True)
+class RelatedEntityRecord:
+    source_entity: str
+    source_path: str
+    entity: str
+    filename: str
+    relation_valid: bool
+    found: bool
+    status: str
+    path: str | None
+    expected_path: str | None
+    candidate_paths: tuple[str, ...]
+    format: str
+    content: str | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "source_entity": self.source_entity,
+            "source_path": self.source_path,
+            "entity": self.entity,
+            "filename": self.filename,
+            "relation_valid": self.relation_valid,
+            "found": self.found,
+            "status": self.status,
+            "path": self.path,
+            "expected_path": self.expected_path,
+            "candidate_paths": list(self.candidate_paths),
+            "format": self.format,
+            "content": self.content,
+        }
+
+
+def read_related_entities(
+    repository_path: str | Path,
+    entity_name: str,
+    entity_path: str,
+    declaration_path: str = DEFAULT_DECLARATION_PATH,
+) -> dict[str, Any]:
+    """Read one-hop file relations declared by DSL and entity front matter."""
+
+    context = open_repository(repository_path, declaration_path)
+    source_entity = _require_entity(context, entity_name)
+    source_relative, source_path = _resolve_entity_path(
+        context,
+        source_entity,
+        entity_path,
+    )
+    try:
+        source_content = source_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ArchRepoError(
+            ErrorCode.INVALID_REPOSITORY,
+            "Source entity file could not be read as UTF-8",
+            details={"path": source_relative.as_posix()},
+        ) from exc
+
+    groups = ()
+    if source_entity.files.format is FileFormat.MARKDOWN_FRONT_MATTER:
+        groups, issues = parse_relation_groups(
+            source_content,
+            source_entity,
+            context.declaration,
+            source_relative.as_posix(),
+        )
+        if issues:
+            raise ArchRepoError(
+                ErrorCode.VALIDATION_ERROR,
+                "Entity relation references are invalid",
+                details={"issues": [issue.as_dict() for issue in issues]},
+            )
+
+    relations: list[dict[str, Any]] = []
+    for group in groups:
+        related_entity = _require_entity(context, group.entity)
+        entity_paths = _entity_paths(context, related_entity)
+        for filename in group.files:
+            candidates = tuple(
+                path.relative_to(context.root).as_posix()
+                for path in entity_paths
+                if path.name == filename
+            )
+            expected_path = _expected_relation_path(related_entity, filename)
+            found_path: str | None = None
+            content: str | None = None
+            if len(candidates) == 1:
+                status = "found"
+                found_path = candidates[0]
+                try:
+                    content = context.root.joinpath(*PurePosixPath(found_path).parts).read_text(
+                        encoding="utf-8"
+                    )
+                except (OSError, UnicodeError) as exc:
+                    raise ArchRepoError(
+                        ErrorCode.INVALID_REPOSITORY,
+                        "Related entity file could not be read as UTF-8",
+                        details={"path": found_path},
+                    ) from exc
+            elif candidates:
+                status = "ambiguous"
+            else:
+                status = "missing"
+
+            relations.append(
+                RelatedEntityRecord(
+                    source_entity=source_entity.name,
+                    source_path=source_relative.as_posix(),
+                    entity=related_entity.name,
+                    filename=filename,
+                    relation_valid=True,
+                    found=status == "found",
+                    status=status,
+                    path=found_path,
+                    expected_path=expected_path,
+                    candidate_paths=candidates,
+                    format=related_entity.files.format.value,
+                    content=content,
+                ).as_dict()
+            )
+
+    return {
+        "source": {
+            "entity": source_entity.name,
+            "path": source_relative.as_posix(),
+        },
+        "relations": relations,
+    }
 
 
 def create_entity(
@@ -246,6 +375,14 @@ def search_entities(
                     )
                 )
     return sorted(matches, key=lambda item: (item.entity, item.path))
+
+
+def _expected_relation_path(entity: EntityDefinition, filename: str) -> str | None:
+    if entity.files.path.mode is not MatchMode.EXACT:
+        return None
+    parent = PurePosixPath(entity.files.path.value)
+    relative = PurePosixPath(filename) if parent == PurePosixPath(".") else parent / filename
+    return relative.as_posix()
 
 
 def _require_entity(context: RepositoryContext, entity_name: str) -> EntityDefinition:

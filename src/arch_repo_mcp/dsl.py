@@ -91,6 +91,7 @@ class FileRule:
 @dataclass(frozen=True, slots=True)
 class EntityDefinition:
     name: str
+    description: str
     relations: tuple[str, ...]
     files: FileRule
 
@@ -357,8 +358,8 @@ def parse_declaration(text: str, *, source: str = "<memory>") -> RepositoryDecla
             entity_mapping = _as_mapping(
                 entity_value,
                 path=entity_path,
-                allowed={"name", "relations", "files"},
-                required={"name", "files"},
+                allowed={"name", "description", "relations", "files"},
+                required={"name", "description", "files"},
                 issues=issues,
             )
             if entity_mapping is None:
@@ -379,6 +380,13 @@ def parse_declaration(text: str, *, source: str = "<memory>") -> RepositoryDecla
                         f"entity name is already declared: {name}",
                     )
                 declared_names.append(name)
+
+            description = _as_string(
+                entity_mapping.get("description"),
+                path=f"{entity_path}.description",
+                issues=issues,
+                non_empty=True,
+            )
 
             relations: list[str] = []
             relations_value = entity_mapping.get("relations", [])
@@ -410,9 +418,14 @@ def parse_declaration(text: str, *, source: str = "<memory>") -> RepositoryDecla
             file_rule = _parse_file_rule(
                 entity_mapping.get("files"), path=f"{entity_path}.files", issues=issues
             )
-            if name is not None and file_rule is not None:
+            if name is not None and description is not None and file_rule is not None:
                 entities.append(
-                    EntityDefinition(name=name, relations=tuple(relations), files=file_rule)
+                    EntityDefinition(
+                        name=name,
+                        description=description.strip(),
+                        relations=tuple(relations),
+                        files=file_rule,
+                    )
                 )
 
     known_names = set(declared_names)

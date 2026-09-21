@@ -26,9 +26,18 @@ arch-repo-mcp = "arch_repo_mcp.server:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+arch_repo_mcp = [
+    "presets/government/*.yaml",
+    "presets/government/templates/*.md",
+]
+
 [tool.pytest.ini_options]
-addopts = "-q"
+addopts = "-q -m 'not integration'"
 testpaths = ["tests"]
+markers = [
+    "integration: requires an explicitly configured external test service",
+]
 
 [tool.ruff]
 line-length = 100
