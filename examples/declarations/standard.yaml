@@ -1,0 +1,57 @@
+declaration:
+  kind: architecture_repository
+  version: v2
+
+entities:
+  - name: fact
+    relations:
+      - requirement
+      - category
+      - architecture_artifact
+    files:
+      path:
+        match: exact
+        value: "facts"
+      filename:
+        match: regex
+        value: "^F-[0-9]{4}\.md$"
+      format: markdown_front_matter
+      template: "templates/fact.md"
+
+  - name: requirement
+    relations:
+      - category
+      - architecture_artifact
+    files:
+      path:
+        match: exact
+        value: "requirements"
+      filename:
+        match: regex
+        value: "^R-[0-9]{4}\.md$"
+      format: markdown_front_matter
+      template: "templates/requirement.md"
+
+  - name: architecture_artifact
+    relations:
+      - category
+    files:
+      path:
+        match: exact
+        value: "artifacts"
+      filename:
+        match: regex
+        value: "^A-[0-9]{4}\.md$"
+      format: markdown_front_matter
+      template: "templates/artifact.md"
+
+  - name: category
+    files:
+      path:
+        match: exact
+        value: "categories"
+      filename:
+        match: regex
+        value: "^C-[0-9]{4}\.md$"
+      format: markdown_front_matter
+      template: "templates/category.md"

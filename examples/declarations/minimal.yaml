@@ -1,0 +1,15 @@
+declaration:
+  kind: architecture_repository
+  version: v2
+
+entities:
+  - name: fact
+    files:
+      path:
+        match: exact
+        value: "facts"
+      filename:
+        match: regex
+        value: "^F-[0-9]{4}\.md$"
+      format: markdown_front_matter
+      template: "templates/fact.md"
