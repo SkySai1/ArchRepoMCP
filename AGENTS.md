@@ -1351,6 +1351,54 @@ Provider integration должна тестироваться отдельным 
 
 ---
 
+NFR-008A — использование Forgejo при разработке и отладке
+
+При разработке и отладке MCP Codex может использовать тестовый Forgejo как внешний provider и среду integration tests.
+
+Параметры подключения должны браться из .env / переменных окружения:
+
+FORGEJO_URL
+FORGEJO_API_URL
+FORGEJO_TOKEN
+FORGEJO_USERNAME
+FORGEJO_ORGANIZATION
+
+FORGEJO_SSH_HOST
+FORGEJO_SSH_PORT
+FORGEJO_SSH_USER
+FORGEJO_SSH_KEY_PATH
+
+FORGEJO_DEFAULT_BRANCH
+FORGEJO_DEFAULT_PRIVATE
+FORGEJO_TLS_VERIFY
+
+Значения должны браться из подготовленного разработчиком .env. Credentials не должны попадать в source code, Git, тестовые данные, логи или исключения. Это соответствует общим требованиям проекта к credentials.
+
+FORGEJO_ORGANIZATION считается выделенной областью для разработки и integration tests. Codex может создавать в ней временные тестовые repositories, предпочтительно с префиксом:
+
+mcp-debug-
+
+Изменение или удаление repositories за пределами этой организации запрещено.
+
+Forgejo REST API используется только для provider-level операций, предусмотренных контрактами проекта: authentication, connection check, repository existence/metadata, repository creation и remote URL resolution. Работа с содержимым repositories должна выполняться через локальный Git и стандартный Git transport, а не через Forgejo file API.
+
+Перед реализацией или изменением Forgejo provider Codex должен использовать:
+
+specs/contracts/forgejo/
+
+как нормативный источник поведения. Возможности Forgejo, отсутствующие в контрактах, не должны автоматически добавляться в MCP.
+
+Общий принцип отладки:
+
+Forgejo API → управление remote repository
+
+Git/SSH → clone, fetch, pull, push
+
+Local Git Repository → основная рабочая область MCP
+
+Forgejo integration tests должны запускаться отдельно и не должны делать локальные unit/DSL/repository tests зависимыми от сети или доступности Forgejo.
+
+
 ## NFR-009 — normalized errors
 
 Низкоуровневые ошибки Git, filesystem, SSH, TLS, HTTP и provider API должны преобразовываться в нормализованную error model.
