@@ -163,21 +163,12 @@ project/
 │   │
 │   ├── contracts/
 │   │   ├── forgejo/
-│   │   │   ├── repositories.yaml
-│   │   │   ├── authentication.yaml
-│   │   │   ├── errors.yaml
-│   │   │   └── ...
-│   │   │
-│   │   ├── gitlab/
-│   │   │   └── ...
+│   │   │   └── *.yaml
 │   │   │
 │   │   └── ...
 │   │
 │   ├── dsl/
-│   │   ├── schema/
-│   │   ├── contracts/
-│   │   ├── presets/
-│   │   └── README.md
+│   │   └── *.md
 │   │
 │   └── examples/
 │       │
@@ -185,11 +176,10 @@ project/
 │       │   ├── minimal.yaml
 │       │   ├── architecture.yaml
 │       │   └── ...
-│       │
 │       ├── repositories/
 │       │   └── ...
 │       │
-│       └── README.md
+│       └── ...
 │
 ├── tests/
 │   │
@@ -201,6 +191,9 @@ project/
 │   └── providers/
 │       ├── forgejo/
 │       └── ...
+│
+├── docs/
+│   └── ...
 │
 └── README.md
 ```
@@ -450,54 +443,6 @@ specs/dsl/
 ```
 
 содержит нормативное описание DSL архитектурного репозитория.
-
-Предлагаемая структура:
-
-```text
-specs/dsl/
-│
-├── schema/
-│   └── ...
-│
-├── contracts/
-│   └── ...
-│
-├── presets/
-│   └── ...
-│
-└── README.md
-```
-
-### `schema/`
-
-Содержит машинно-читаемое описание структуры DSL, если соответствующий формат используется проектом.
-
-### `contracts/`
-
-Содержит semantic contracts DSL:
-
-```text
-допустимые элементы
-отношения между элементами
-ограничения
-правила validation
-семантику DSL
-```
-
-### `presets/`
-
-Содержит нормативный набор закрытых preset-значений DSL.
-
-### `README.md`
-
-Содержит описание:
-
-* назначения DSL;
-* версии;
-* правил расширения;
-* структуры спецификации;
-* порядка validation.
-
 ---
 
 ## 3.6. Отличие `specs/dsl/` от `src/dsl/`
@@ -555,22 +500,6 @@ specs/examples/
 ```
 
 содержит нормативные и демонстрационные примеры использования спецификаций.
-
-Предлагаемая структура:
-
-```text
-specs/examples/
-│
-├── declarations/
-│   ├── minimal.yaml
-│   ├── architecture.yaml
-│   └── ...
-│
-├── repositories/
-│   └── ...
-│
-└── README.md
-```
 
 ---
 
