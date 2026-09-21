@@ -6,8 +6,8 @@ MCP-сервер для локального управления архитек
 
 Проект находится на ранней стадии разработки. Текущий вертикальный срез уже позволяет
 AI-агенту создать, открыть и проверить локальный repository, управлять DSL-сущностями и
-исследовать локальное Git-состояние. Ни одна из реализованных операций не использует сеть
-или автоматически создаёт commit.
+исследовать локальное Git-состояние. Доступ к remote выполняется только через отдельные
+явные операции clone, fetch и publish; остальные возможности полностью работают offline.
 
 ## Реализовано
 
@@ -20,12 +20,13 @@ AI-агенту создать, открыть и проверить локал�
 - Entity Service: `list`, `read`, `search`, `create`, `update`, `delete`;
 - rollback entity mutations, не прошедших полную repository validation;
 - Local Git Service: `status`, `diff`, `history`, `commit`, branches и remotes;
+- Remote Sync Service: явные `clone`, `fetch` и `publish` через Git transport;
 - MCP server на официальном Python SDK v2 со stdio transport;
 - нормализованная модель ошибок;
-- автоматические DSL, repository, entity и MCP contract tests.
+- автоматические DSL, repository, entity, local Git, remote sync и MCP contract tests.
 
-Пока не реализованы clone/fetch/pull/publish и Forgejo provider. Они будут добавляться
-отдельными слоями в соответствии с дорожной картой из `AGENTS.md`.
+Пока не реализованы pull/integration полученных изменений и Forgejo provider. Безопасная
+интеграция будет добавлена отдельно после проверки fetched tree до изменения working tree.
 
 ## Архитектура текущего среза
 
@@ -34,9 +35,10 @@ MCP tools
    │
    ├── Repository Service ── create / open / validate
    ├── Entity Service ────── list / read / search / create / update / delete
-   └── Local Git Service ─── status / diff / history / commit / branches / remotes
-                │
-                ├── DSL v2 Engine
+   ├── Local Git Service ─── status / diff / history / commit / branches / remotes
+   └── Remote Sync Service ─ clone / fetch / publish
+                │                         │
+                ├── DSL v2 Engine         └── explicit Git transport
                 │
                 ▼
           Local Git Repository
@@ -114,6 +116,9 @@ python -m arch_repo_mcp.server
 | `branch_switch` | Переключиться на валидную локальную ветку из clean state |
 | `repository_remotes` | Получить remotes с очищенными URL |
 | `remote_configure` | Добавить или явно заменить remote без сетевого запроса |
+| `repository_clone` | Явно клонировать remote и создать target только после validation |
+| `repository_fetch` | Явно получить refs без изменения index и working tree |
+| `repository_publish` | Валидировать и явно отправить текущий `HEAD` без force push |
 | `entity_create` | Создать entity из объявленного template |
 | `entity_list` | Получить список экземпляров указанного DSL entity |
 | `entity_read` | Прочитать один экземпляр по repository-relative path |
@@ -121,10 +126,12 @@ python -m arch_repo_mcp.server
 | `entity_update` | Локально заменить entity с validation и rollback |
 | `entity_delete` | Локально удалить entity с validation и rollback |
 
-Все tools кроме `repository_create` принимают `repository_path`. Repository и Entity tools
-также принимают необязательный `declaration_path` с явно документированным значением по
-умолчанию `architecture.yaml`. Git inspection отделён от DSL validation и остаётся доступен
-для диагностики невалидного working tree. Ответ имеет единый envelope:
+Все операции над существующим repository принимают `repository_path`; `repository_create`
+и `repository_clone` вместо него принимают новый `target_path`. Repository и Entity tools,
+которым требуется декларация, также принимают необязательный `declaration_path` с явно
+документированным значением по умолчанию `architecture.yaml`. Git inspection отделён от
+DSL validation и остаётся доступен для диагностики невалидного working tree. Ответ имеет
+единый envelope:
 
 ```json
 {
@@ -178,6 +185,28 @@ branch не проходит validation, MCP возвращается на ис�
 требует явного `replace=true`. HTTP(S) URL со встроенными credentials, query или fragment
 отклоняются; `repository_remotes` удаляет credential-bearing части из возвращаемых URL.
 
+### Remote synchronization
+
+Remote-операции никогда не запускаются другими tools неявно и не запрашивают credentials
+интерактивно. `repository_clone` клонирует во временный каталог рядом с `target_path`,
+отключает рекурсивное получение submodules, выполняет полную DSL/repository validation и
+только после успеха перемещает результат в target. Невалидный clone не оставляет частично
+созданный repository по целевому пути.
+
+`repository_fetch` требует явное имя настроенного remote и только обновляет remote-tracking
+refs. Операция не выполняет merge, rebase, switch, stash или reset и не меняет index и
+working tree. Получение tags и prune отключены по умолчанию и включаются отдельными
+параметрами.
+
+`repository_publish` требует clean index и working tree, повторно валидирует repository и
+публикует текущий `HEAD` в явно указанные remote и branch. Операция не настраивает upstream,
+не отправляет tags, не использует force push и сообщает о non-fast-forward как об ошибке.
+HTTP(S) URL со встроенными credentials, query или fragment запрещены также для clone;
+секреты следует передавать средствами окружения и Git credential helper вне MCP-ответов.
+
+Pull пока намеренно отсутствует: integration fetched commit будет реализована только с
+предварительной validation целевого дерева и без автоматического разрешения конфликтов.
+
 ## Минимальная DSL-декларация
 
 ```yaml
@@ -213,8 +242,8 @@ python -m pytest
 python -m ruff check .
 ```
 
-Тесты создают временные локальные Git repositories и не требуют Forgejo или доступа к
-сети.
+Тесты создают временные локальные Git repositories. Remote sync проверяется через локальные
+bare repositories и `file://` transport, поэтому Forgejo и доступ к сети не требуются.
 
 ## Forgejo и credentials
 
