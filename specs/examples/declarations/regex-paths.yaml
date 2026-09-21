@@ -4,6 +4,8 @@ declaration:
 
 entities:
   - name: network_fact
+    description: > 
+      Факт о существующей или проектируемой сетевой архитектуре
     relations:
       - regulatory_requirement
     files:
@@ -17,6 +19,8 @@ entities:
       template: "templates/network-fact.md"
 
   - name: regulatory_requirement
+    description: > 
+      Запись о регуляторном требовании, которое должно быть выполнено в рамках проектирования и эксплуатации системы.
     files:
       path:
         match: regex

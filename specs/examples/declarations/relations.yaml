@@ -4,6 +4,8 @@ declaration:
 
 entities:
   - name: fact
+    description: > 
+      Факт о существующей или проектируемой архитектуре: компоненте, интерфейсе, технологии, настройке, характеристике или ином установленном свойстве системы.
     relations:
       - requirement
       - category
@@ -18,6 +20,8 @@ entities:
       template: "templates/fact.md"
 
   - name: requirement
+    description: > 
+      Требование к архитектуре: ТЗ, НПА, внутреннее требование
     relations:
       - architecture_artifact
     files:
@@ -31,6 +35,8 @@ entities:
       template: "templates/requirement.md"
 
   - name: architecture_artifact
+    description: > 
+      Архитектурный документ, схема или иной артефакт, описывающий архитектуру системы.
     relations:
       - category
     files:
@@ -44,6 +50,8 @@ entities:
       template: "templates/artifact.md"
 
   - name: category
+    description: > 
+      Категория архитектурных фактов, требований и артефактов.
     files:
       path:
         match: exact

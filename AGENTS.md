@@ -1820,7 +1820,7 @@ F-0001.md
 
 ---
 
-## 7.3. Entity names не являются глобальными presets
+## 7.3. Entity names и description не являются глобальными presets
 
 Имена:
 
@@ -1829,6 +1829,14 @@ fact
 requirement
 category
 architecture_artifact
+```
+
+Описание
+```
+fact description
+requirement description
+category description
+architecture_artifact description
 ```
 
 являются identifiers конкретного repository.
@@ -1890,6 +1898,8 @@ Relations связывают объявленные типы сущностей.
 entities:
 
   - name: fact
+    description: >
+        fact description
     relations:
       - requirement
       - category

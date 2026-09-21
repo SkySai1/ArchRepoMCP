@@ -21,6 +21,23 @@
 
 - [ ] [MUST] Создать MCP tool формирующий goverment репозиторий с описанием dsl структы из dsl/architecture.yaml
 - [ ] [MUST] Настроить работу с переменной окружения хранения корневой директории, передаваемой от агента в том числе, внутри которой существуют все репозитории. 
+- [ ] [MUST] Добавить MCP-инструмент repository_describe или entity_describe, позволяющий AI-агенту получить полное описание модели управляемого repository.
+- [ ] [MUST] Для каждой DSL entity возвращать:
+  name;
+  description;
+  семантическое назначение entity;
+  relations;
+  правила path;
+  правила filename;
+  format;
+  путь к template;
+  содержимое template.
+- [ ] [MUST] Обеспечить возможность AI-агенту перед обработкой исходных документов получить модель repository через MCP и использовать её как единственный источник правил классификации и создания entities.
+- [ ] [MUST] Добавить contract tests для нового MCP-инструмента и проверку соответствия возвращаемого описания фактической DSL-декларации и templates.
+- [ ] [MUST] Добавить integration test сценария: исходное техническое задание → анализ AI-агентом → классификация информации по entity types → создание файлов через entity_create / entity_update согласно DSL и templates.
+
+## Следующий обязательный этап
+
 - [ ] [MUST] Разделять transport failures на `AUTHENTICATION_ERROR`,
   `PERMISSION_DENIED`, `NETWORK_ERROR`, `TLS_ERROR`, `TIMEOUT`, `NOT_FOUND` и
   `PROVIDER_CAPABILITY_GAP` без возврата чувствительного stderr.
@@ -39,9 +56,6 @@
   целевого test instance.
 - [ ] [MUST] Загружать Forgejo-настройки только из environment или локального env-файла,
   не возвращая и не логируя token.
-
-## Следующий обязательный этап
-
 - [ ] [MUST] Нормализовать `specs/contracts/forgejo`: удалить direct remote file API
   из минимального provider scope и согласовать runtime configuration с `AGENTS.md`.
 - [ ] [MUST] Реализовать минимальный Forgejo provider: connection/version,
