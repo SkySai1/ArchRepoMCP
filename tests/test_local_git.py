@@ -101,6 +101,19 @@ def test_status_distinguishes_worktree_and_index_changes(tmp_path: Path) -> None
     assert index_status.entries[0].worktree_status == " "
 
 
+def test_git_inspection_remains_available_when_dsl_content_is_invalid(tmp_path: Path) -> None:
+    repository = _make_repository(tmp_path)
+    (repository / "facts" / "F-0001.md").write_text(
+        "invalid front matter", encoding="utf-8"
+    )
+
+    status = repository_status(repository)
+    diff = repository_diff(repository)
+
+    assert status.entries[0].path == "facts/F-0001.md"
+    assert "+invalid front matter" in diff
+
+
 def test_diff_returns_worktree_and_staged_patches(tmp_path: Path) -> None:
     repository = _make_repository(tmp_path)
     (repository / "facts" / "F-0001.md").write_text(UPDATED_CONTENT, encoding="utf-8")
@@ -173,4 +186,3 @@ def test_branch_creation_rejects_invalid_or_duplicate_name(tmp_path: Path) -> No
     with pytest.raises(ArchRepoError) as duplicate:
         create_branch(repository, "architecture-review")
     assert duplicate.value.code is ErrorCode.CONFLICT
-

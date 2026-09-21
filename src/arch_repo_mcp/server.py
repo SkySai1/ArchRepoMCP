@@ -119,19 +119,15 @@ def repository_validate(
 @mcp.tool()
 def repository_status(
     repository_path: str,
-    declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
     """Return local Git status without fetch, pull, or other network operations."""
 
-    return _call(
-        lambda: local_repository_status(repository_path, declaration_path).as_dict()
-    )
+    return _call(lambda: local_repository_status(repository_path).as_dict())
 
 
 @mcp.tool()
 def repository_diff(
     repository_path: str,
-    declaration_path: str = "architecture.yaml",
     staged: bool = False,
     base_revision: str | None = None,
     target_revision: str | None = None,
@@ -142,7 +138,6 @@ def repository_diff(
         lambda: {
             "diff": local_repository_diff(
                 repository_path,
-                declaration_path,
                 staged=staged,
                 base_revision=base_revision,
                 target_revision=target_revision,
@@ -154,13 +149,12 @@ def repository_diff(
 @mcp.tool()
 def repository_branches(
     repository_path: str,
-    declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
     """List local branches without contacting a remote."""
 
     return _call(
         lambda: [
-            branch.as_dict() for branch in list_branches(repository_path, declaration_path)
+            branch.as_dict() for branch in list_branches(repository_path)
         ]
     )
 
@@ -170,7 +164,6 @@ def branch_create(
     repository_path: str,
     branch_name: str,
     start_point: str = "HEAD",
-    declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
     """Create a local branch without switching the repository to it."""
 
@@ -179,7 +172,6 @@ def branch_create(
             repository_path,
             branch_name,
             start_point,
-            declaration_path,
         ).as_dict()
     )
 
@@ -187,7 +179,6 @@ def branch_create(
 @mcp.tool()
 def repository_history(
     repository_path: str,
-    declaration_path: str = "architecture.yaml",
     max_count: int = 20,
     revision: str = "HEAD",
 ) -> dict[str, Any]:
@@ -198,7 +189,6 @@ def repository_history(
             commit.as_dict()
             for commit in local_repository_history(
                 repository_path,
-                declaration_path,
                 max_count=max_count,
                 revision=revision,
             )

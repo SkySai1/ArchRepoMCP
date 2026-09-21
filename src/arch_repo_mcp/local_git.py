@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
-from arch_repo_mcp.repository import DEFAULT_DECLARATION_PATH, open_repository
+from arch_repo_mcp.repository import discover_repository_root
 
 _GIT_TIMEOUT_SECONDS = 30
 
@@ -78,11 +78,10 @@ class GitCommit:
 
 def repository_status(
     repository_path: str | Path,
-    declaration_path: str = DEFAULT_DECLARATION_PATH,
 ) -> GitStatus:
     """Return deterministic porcelain status for a valid local repository."""
 
-    root = open_repository(repository_path, declaration_path).root
+    root = discover_repository_root(repository_path)
     result = _run_git(
         root,
         ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -134,7 +133,6 @@ def repository_status(
 
 def repository_diff(
     repository_path: str | Path,
-    declaration_path: str = DEFAULT_DECLARATION_PATH,
     *,
     staged: bool = False,
     base_revision: str | None = None,
@@ -142,7 +140,7 @@ def repository_diff(
 ) -> str:
     """Return a no-color local diff for the working tree, index, or explicit revisions."""
 
-    root = open_repository(repository_path, declaration_path).root
+    root = discover_repository_root(repository_path)
     if staged and (base_revision is not None or target_revision is not None):
         raise ArchRepoError(
             ErrorCode.VALIDATION_ERROR,
@@ -169,11 +167,10 @@ def repository_diff(
 
 def list_branches(
     repository_path: str | Path,
-    declaration_path: str = DEFAULT_DECLARATION_PATH,
 ) -> list[GitBranch]:
     """List local branches without contacting remotes."""
 
-    root = open_repository(repository_path, declaration_path).root
+    root = discover_repository_root(repository_path)
     result = _run_git(
         root,
         ["for-each-ref", "--format=%(refname:short)%00%(HEAD)%00%(objectname)", "refs/heads"],
@@ -195,11 +192,10 @@ def create_branch(
     repository_path: str | Path,
     branch_name: str,
     start_point: str = "HEAD",
-    declaration_path: str = DEFAULT_DECLARATION_PATH,
 ) -> GitBranch:
     """Create a local branch at an explicit start point without switching to it."""
 
-    root = open_repository(repository_path, declaration_path).root
+    root = discover_repository_root(repository_path)
     _validate_branch_name(root, branch_name)
     _validate_revision_argument(start_point)
     _run_git(
@@ -216,7 +212,7 @@ def create_branch(
     branch = next(
         (
             item
-            for item in list_branches(root, declaration_path)
+            for item in list_branches(root)
             if item.name == branch_name
         ),
         None,
@@ -228,7 +224,6 @@ def create_branch(
 
 def repository_history(
     repository_path: str | Path,
-    declaration_path: str = DEFAULT_DECLARATION_PATH,
     *,
     max_count: int = 20,
     revision: str = "HEAD",
@@ -240,7 +235,7 @@ def repository_history(
             ErrorCode.VALIDATION_ERROR, "History max_count must be between 1 and 1000"
         )
     _validate_revision_argument(revision)
-    root = open_repository(repository_path, declaration_path).root
+    root = discover_repository_root(repository_path)
     if revision == "HEAD" and _resolve_optional_head(root) is None:
         return []
     _run_git(
