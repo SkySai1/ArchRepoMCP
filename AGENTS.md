@@ -1,1954 +1,2412 @@
-# 1. Описание продукта
+# 1. Назначение и описание решения
 
-Необходимо разработать MCP-сервер для управления репозиторием архитектуры, размещённым в GitLab.
+Разрабатываемое решение представляет собой **MCP-сервер управления архитектурным Git-репозиторием**, предназначенный для использования AI-агентами, включая Goose.
 
-Продукт предоставляет ИИ-агенту контролируемый интерфейс для чтения, анализа и изменения архитектурного репозитория без необходимости самостоятельно знать его физическую структуру.
+MCP предоставляет AI-агенту контролируемый интерфейс для работы с архитектурным репозиторием, содержащим требования, факты об архитектуре, категории, архитектурные артефакты и иные типы сущностей, определяемые декларациями DSL.
 
-Репозиторий описывается декларацией DSL. Декларация определяет:
+Основной рабочей областью MCP является **локальный Git-репозиторий**.
 
-* какие логические сущности существуют;
-* какие сущности могут быть логически связаны;
-* где расположены экземпляры каждой сущности;
-* по каким правилам определяются файлы экземпляров;
-* в каком формате хранятся файлы;
-* какой файл используется как шаблон при создании экземпляра.
+MCP должен обеспечивать:
 
-Основной принцип:
+* создание нового локального архитектурного репозитория;
+* получение существующего репозитория из удалённого Git-источника;
+* открытие существующего локального репозитория;
+* чтение и изменение архитектурных сущностей;
+* валидацию содержимого согласно DSL;
+* локальную работу с Git;
+* ведение локальной истории изменений;
+* явную публикацию локальных изменений в удалённый Git-репозиторий;
+* явное получение изменений из удалённого Git-репозитория.
 
-```text
-DSL
- ↓
-описание типов сущностей и их размещения
- ↓
-GitLab repository
- ↓
-файлы
- ↓
-экземпляры сущностей
-```
+Удалённый Git-репозиторий является **внешним контуром синхронизации**, а не основной рабочей файловой системой MCP.
 
-Один файл, удовлетворяющий файловому правилу сущности, представляет один экземпляр этой сущности.
+Удалённым репозиторием может быть:
 
-DSL не описывает внутренние поля экземпляров. Содержимое файлов остаётся произвольным в пределах заявленного формата.
+* Forgejo;
+* GitLab;
+* GitHub;
+* Gitea;
+* другой Git provider;
+* self-hosted Git-сервис;
+* Git-сервис внутри локальной или корпоративной сети.
 
-Template является стартовым содержимым нового файла, но не является схемой, которой экземпляр обязан соответствовать после создания.
-
-GitLab используется как:
-
-* источник истины;
-* хранилище архитектуры;
-* механизм версионирования;
-* механизм совместной работы;
-* механизм согласования изменений.
-
-Штатный сценарий изменения:
+Основная архитектурная модель:
 
 ```text
-рабочая ветка
-    ↓
-commit
-    ↓
-Merge Request
-    ↓
-целевая ветка
+AI Agent / Goose
+        │
+        ▼
+┌──────────────────────────────────┐
+│             MCP Core             │
+│                                  │
+│  DSL Engine                      │
+│  Repository Model                │
+│  Entity Service                  │
+│  Validation / Governance         │
+│  Local Git Service               │
+│  Remote Sync Service             │
+└────────────────┬─────────────────┘
+                 │
+                 ▼
+        Local Git Repository
+                 │
+       ┌─────────┴──────────┐
+       │                    │
+   local work         explicit sync
+                            │
+                            ▼
+                   Remote Git Repository
 ```
 
-Прямое изменение основной ветки продуктом не является штатным сценарием.
+Принцип работы:
+
+```text
+AI
+ ↓
+MCP
+ ↓
+DSL / Repository Model
+ ↓
+Local Git Repository
+```
+
+и только по отдельной явной команде:
+
+```text
+Local Git Repository
+        ↓
+Remote Sync
+        ↓
+Remote Git Repository
+```
+
+MCP должен полноценно работать локально без доступного Git provider и без подключения к сети.
 
 ---
 
 # 2. Ключевые характеристики
 
-1. **Declarative repository model.** Физическая структура репозитория определяется DSL-декларацией.
-2. **Произвольные сущности.** Имена сущностей задаются владельцем репозитория.
-3. **File = Entity Instance.** Один подходящий файл соответствует одному экземпляру сущности.
-4. **Связи между сущностями.** Сущность может объявлять отношения с другими объявленными сущностями.
-5. **Свободное содержимое.** DSL не описывает бизнес-схему содержимого экземпляров.
-6. **Template-based creation.** Каждый тип сущности может иметь файл-шаблон того же формата.
-7. **Закрытый DSL.** Structural keys и preset-значения должны соответствовать таблице DSL.
-8. **Git-native workflow.** Изменения выполняются через branch → commit → Merge Request.
-9. **Atomic changes.** Несколько файлов одного логического изменения должны записываться одним commit, когда это возможно.
-10. **Fail closed.** Невалидная декларация, неоднозначность сущности или нарушение DSL-контрактов блокируют операции изменения.
+1. **Local repository first**
+   Все основные операции выполняются над локальным Git-репозиторием.
+
+2. **Contract-driven architecture**
+   Публичные функции MCP, структуры данных, ошибки и допустимое поведение определяются контрактами проекта.
+
+3. **DSL-driven repository**
+   Логическая структура архитектурного репозитория определяется DSL, а не жёстко зашивается в исходный код MCP.
+
+4. **Git-native versioning**
+   История изменений, ветки, diff и фиксация изменений реализуются средствами локального Git.
+
+5. **Explicit remote synchronization**
+   Получение и публикация изменений выполняются только отдельными явными командами.
+
+6. **Provider independence**
+   MCP Core не зависит от Forgejo, GitLab, GitHub или другого конкретного Git provider.
+
+7. **No remote file API**
+   Изменение содержимого репозитория через REST API Git provider не используется.
+
+8. **Controlled AI operations**
+   AI-агент получает типизированные MCP-функции вместо произвольного shell/Git-интерфейса.
+
+9. **Validation before publication**
+   Изменения должны проходить DSL- и repository-validation до публикации в remote.
+
+10. **Offline capability**
+    Все операции, кроме явно сетевых, должны оставаться доступными без remote provider.
 
 ---
 
-# 3. Функциональные требования
+# 3. Предлагаемая структура организации
 
-## 3.1. Обязательная структура проекта
-
-Каноническая машиночитаемая таблица DSL:
+## 3.1. Общая структура проекта MCP
 
 ```text
-dsl/DSL_V2_TABLES.yaml
+project/
+│
+├── src/
+│   │
+│   ├── mcp/
+│   │   ├── server/
+│   │   ├── tools/
+│   │   └── models/
+│   │
+│   ├── core/
+│   │   ├── repository/
+│   │   ├── entities/
+│   │   ├── validation/
+│   │   └── governance/
+│   │
+│   ├── git/
+│   │   ├── local/
+│   │   ├── diff/
+│   │   ├── history/
+│   │   ├── branches/
+│   │   └── remotes/
+│   │
+│   ├── remote/
+│   │   ├── interface/
+│   │   └── providers/
+│   │       ├── forgejo/
+│   │       └── ...
+│   │
+│   ├── dsl/
+│   │   ├── parser/
+│   │   ├── validator/
+│   │   ├── models/
+│   │   └── resolver/
+│   │
+│   └── config/
+│
+├── specs/
+│   │
+│   ├── contracts/
+│   │   ├── forgejo/
+│   │   │   ├── repositories.yaml
+│   │   │   ├── authentication.yaml
+│   │   │   ├── errors.yaml
+│   │   │   └── ...
+│   │   │
+│   │   ├── gitlab/
+│   │   │   └── ...
+│   │   │
+│   │   └── ...
+│   │
+│   ├── dsl/
+│   │   ├── schema/
+│   │   ├── contracts/
+│   │   ├── presets/
+│   │   └── README.md
+│   │
+│   └── examples/
+│       │
+│       ├── declarations/
+│       │   ├── minimal.yaml
+│       │   ├── architecture.yaml
+│       │   └── ...
+│       │
+│       ├── repositories/
+│       │   └── ...
+│       │
+│       └── README.md
+│
+├── tests/
+│   │
+│   ├── unit/
+│   ├── contract/
+│   ├── integration/
+│   ├── dsl/
+│   ├── repositories/
+│   └── providers/
+│       ├── forgejo/
+│       └── ...
+│
+└── README.md
 ```
 
-Файл является нормативным источником:
+Основное разделение проекта:
 
 ```text
-Grammar
-Presets
-Contracts
+specs/
+   ↓
+нормативное описание
+
+src/
+   ↓
+реализация
+
+tests/
+   ↓
+проверка соответствия реализации спецификациям
 ```
 
-Не допускается существование structural keys, preset-значений или семантических правил, реализованных только в исходном коде и отсутствующих в таблице DSL.
-
-Человекочитаемое представление рекомендуется автоматически генерировать:
-
-```text
-docs/dsl/DSL_V2_TABLES.md
-```
-
-Примеры деклараций:
-
-```text
-examples/declarations/
-```
-
-Минимально:
-
-```text
-examples/declarations/
-├── minimal.yaml
-├── standard.yaml
-├── regex-paths.yaml
-└── relations.yaml
-```
-
-Примеры template:
-
-```text
-examples/templates/
-```
-
-Основная декларация управляемого репозитория по умолчанию:
-
-```text
-governance/declaration.yaml
-```
-
-Путь должен быть конфигурируемым.
+`specs/` является нормативной частью проекта и не должен зависеть от конкретной реализации MCP.
 
 ---
 
-## 3.2. Конфигурация подключения
+## 3.2. Директория `specs/contracts/`
 
-MCP должен поддерживать следующие параметры:
+Директория:
 
 ```text
-GitLab URL
-Project ID или Project Path
-Access Token
-Target / Default Branch
-Declaration Path
-Request Timeout
-TLS Verification
-SSL Certificate Pin
+specs/contracts/
 ```
 
-### Источники конфигурации
+содержит **YAML-контракты интеграции с внешними сервисами**.
 
-Конфигурация должна поддерживать как минимум два источника.
-
-**Источник 1 — `.env`.**
-
-Используется по умолчанию и позволяет запускать MCP без передачи параметров при каждом вызове.
+Каждый внешний сервис должен иметь отдельную поддиректорию.
 
 Например:
 
 ```text
-GITLAB_URL=
-GITLAB_PROJECT=
-GITLAB_TOKEN=
-GITLAB_TARGET_BRANCH=
-DECLARATION_PATH=
-REQUEST_TIMEOUT=
-TLS_VERIFY=
-TLS_PIN_SHA256=
+specs/contracts/
+│
+├── forgejo/
+│   ├── authentication.yaml
+│   ├── repositories.yaml
+│   ├── errors.yaml
+│   └── ...
+│
+├── gitlab/
+│   └── ...
+│
+└── github/
+    └── ...
 ```
 
-**Источник 2 — runtime-конфигурация от ИИ-агента.**
+Первым поддерживаемым внешним сервисом является:
 
-ИИ-агент, например Goose, должен иметь возможность передать те же параметры при инициализации или вызове MCP.
+```text
+Forgejo
+```
+
+Контракты внутри:
+
+```text
+specs/contracts/forgejo/
+```
+
+являются нормативным источником для реализации:
+
+```text
+src/remote/providers/forgejo/
+```
+
+Связь должна быть следующей:
+
+```text
+specs/contracts/forgejo/*.yaml
+              ↓
+      анализ контрактов
+              ↓
+src/remote/providers/forgejo/
+              ↓
+        contract tests
+```
+
+### Назначение YAML-контрактов
+
+Контракт внешнего сервиса должен описывать необходимые для реализации сведения, например:
+
+```text
+имя операции
+назначение операции
+
+HTTP method
+endpoint
+
+request parameters
+required / optional
+
+request body
+
+response model
+
+authentication requirements
+
+error mapping
+
+pagination
+
+ограничения операции
+```
+
+Конкретная структура YAML определяется отдельным контрактом формата provider specifications.
+
+AI-агент-разработчик не должен реализовывать API-функцию внешнего сервиса только на основании собственных знаний о Forgejo, GitLab или другом provider.
+
+Источником требований является:
+
+```text
+specs/contracts/<provider>/
+```
+
+Если внешний сервис умеет некоторую функцию, но соответствующая возможность отсутствует в YAML-контрактах, она не должна автоматически становиться частью MCP.
+
+---
+
+## 3.3. Связь contracts и API-модулей
+
+Каждому поддерживаемому provider должен соответствовать программный модуль:
+
+```text
+specs/contracts/<provider>/
+             ↕
+src/remote/providers/<provider>/
+```
 
 Например:
 
 ```text
-gitlab_url
-gitlab_project
-gitlab_token
-target_branch
-declaration_path
-request_timeout
-tls_verify
-tls_pin_sha256
+specs/contracts/forgejo/
+             ↓
+src/remote/providers/forgejo/
 ```
 
-Runtime-параметры имеют приоритет над `.env`.
-
-Обязательный порядок разрешения конфигурации:
+При добавлении нового provider:
 
 ```text
-параметр ИИ-агента
-        ↓
-если отсутствует
-        ↓
-.env
-        ↓
-если отсутствует
-        ↓
-встроенное значение по умолчанию
-        ↓
-если обязательного значения всё ещё нет
-        ↓
-CONFIGURATION_ERROR
+GitLab
 ```
+
+сначала должны появиться его нормативные контракты:
+
+```text
+specs/contracts/gitlab/
+```
+
+и только затем реализация:
+
+```text
+src/remote/providers/gitlab/
+```
+
+Не допускается ситуация:
+
+```text
+src/remote/providers/gitlab/
+```
+
+существует как публично поддерживаемый provider, но:
+
+```text
+specs/contracts/gitlab/
+```
+
+отсутствует.
+
+---
+
+## 3.4. Contract-driven реализация provider
+
+Разработка API-модуля должна следовать цепочке:
+
+```text
+YAML contracts
+      ↓
+contract parser / analysis
+      ↓
+function inventory
+      ↓
+request / response models
+      ↓
+provider implementation
+      ↓
+contract tests
+```
+
+Каждая публичная provider-функция должна иметь трассировку:
+
+```text
+YAML contract
+      ↓
+implementation
+      ↓
+test
+```
+
+Контракты должны определять только те возможности внешнего provider, которые необходимы MCP.
+
+На первом этапе это преимущественно общие repository-level операции:
+
+```text
+authentication
+
+connection check
+
+repository existence
+
+repository metadata
+
+remote repository creation
+если предусмотрено требованиями
+
+remote URL resolution
+```
+
+Контракты первого этапа не должны описывать API непосредственного управления архитектурными файлами через внешний provider.
+
+Не реализуются через provider REST API:
+
+```text
+remote_file_read
+remote_file_create
+remote_file_update
+remote_file_delete
+remote_batch_file_update
+```
+
+Работа с содержимым выполняется через локальный Git repository.
+
+---
+
+## 3.5. Директория `specs/dsl/`
+
+Директория:
+
+```text
+specs/dsl/
+```
+
+содержит нормативное описание DSL архитектурного репозитория.
+
+Предлагаемая структура:
+
+```text
+specs/dsl/
+│
+├── schema/
+│   └── ...
+│
+├── contracts/
+│   └── ...
+│
+├── presets/
+│   └── ...
+│
+└── README.md
+```
+
+### `schema/`
+
+Содержит машинно-читаемое описание структуры DSL, если соответствующий формат используется проектом.
+
+### `contracts/`
+
+Содержит semantic contracts DSL:
+
+```text
+допустимые элементы
+отношения между элементами
+ограничения
+правила validation
+семантику DSL
+```
+
+### `presets/`
+
+Содержит нормативный набор закрытых preset-значений DSL.
+
+### `README.md`
+
+Содержит описание:
+
+* назначения DSL;
+* версии;
+* правил расширения;
+* структуры спецификации;
+* порядка validation.
+
+---
+
+## 3.6. Отличие `specs/dsl/` от `src/dsl/`
+
+Эти директории имеют принципиально разные назначения.
+
+```text
+specs/dsl/
+```
+
+определяет:
+
+> Как DSL обязан работать.
+
+```text
+src/dsl/
+```
+
+реализует:
+
+> Как MCP выполняет эти правила.
+
+Связь:
+
+```text
+specs/dsl/
+     ↓
+ normative contracts
+     ↓
+src/dsl/
+     ↓
+ parser / validator / resolver
+```
+
+Изменение реализации в:
+
+```text
+src/dsl/
+```
+
+не должно незаметно изменять семантику:
+
+```text
+specs/dsl/
+```
+
+---
+
+## 3.7. Директория `specs/examples/`
+
+Директория:
+
+```text
+specs/examples/
+```
+
+содержит нормативные и демонстрационные примеры использования спецификаций.
+
+Предлагаемая структура:
+
+```text
+specs/examples/
+│
+├── declarations/
+│   ├── minimal.yaml
+│   ├── architecture.yaml
+│   └── ...
+│
+├── repositories/
+│   └── ...
+│
+└── README.md
+```
+
+---
+
+## 3.8. `specs/examples/declarations/`
+
+Директория:
+
+```text
+specs/examples/declarations/
+```
+
+содержит валидные примеры деклараций DSL.
+
+Например:
+
+```text
+minimal.yaml
+architecture.yaml
+requirements-and-facts.yaml
+```
+
+Все декларации в этой директории должны:
+
+1. соответствовать текущей версии DSL;
+2. проходить автоматический DSL validator;
+3. использоваться в regression tests;
+4. обновляться при изменении semantic contract DSL;
+5. использовать только возможности, определённые в `specs/dsl/`.
 
 Таким образом:
 
 ```text
-AI runtime configuration > .env > internal defaults
+specs/dsl/
+       ↓
+определяет язык
+       ↓
+specs/examples/declarations/
+       ↓
+демонстрирует корректное использование языка
+       ↓
+tests/
+       ↓
+проверяет реализацию
 ```
 
-Пример:
+---
+
+## 3.9. `specs/examples/repositories/`
+
+Каталог:
 
 ```text
-.env:
-GITLAB_TARGET_BRANCH=main
-
-Goose:
-target_branch=architecture-test
+specs/examples/repositories/
 ```
 
-Эффективное значение:
+может содержать небольшие эталонные архитектурные репозитории.
+
+Например:
 
 ```text
-architecture-test
+specs/examples/repositories/
+└── minimal-architecture/
+    │
+    ├── architecture.yaml
+    │
+    ├── facts/
+    │   └── F-0001.md
+    │
+    ├── requirements/
+    │   └── R-0001.md
+    │
+    ├── categories/
+    │   └── C-0001.md
+    │
+    └── templates/
+        ├── fact.md
+        ├── requirement.md
+        └── category.md
 ```
 
-ИИ-агент должен иметь возможность узнать:
+Они могут использоваться:
 
-* перечень поддерживаемых конфигурационных параметров;
-* их тип;
-* обязательность;
-* наличие значения по умолчанию;
-* возможность runtime override.
+* в integration tests;
+* при разработке MCP;
+* как документация;
+* для проверки совместимости новой версии DSL;
+* как примеры для AI-агента.
 
-Для этого MCP рекомендуется предоставить инструмент:
+---
+
+## 3.10. Структура `src/`
+
+Каталог:
 
 ```text
-configuration_schema()
+src/
 ```
 
-Он **не должен возвращать секретные значения**.
+содержит исключительно программную реализацию MCP.
+
+### `src/mcp/`
+
+Содержит MCP transport/exposure layer:
+
+```text
+server
+tools
+public models
+```
+
+### `src/core/`
+
+Содержит provider-independent domain logic:
+
+```text
+Repository Model
+Entity Service
+Validation
+Governance
+```
+
+### `src/git/`
+
+Содержит работу с локальным Git:
+
+```text
+status
+diff
+history
+branches
+commits
+remotes
+```
+
+### `src/remote/`
+
+Содержит внешний synchronization layer:
+
+```text
+interface/
+providers/
+```
+
+Provider modules должны реализовывать общий интерфейс и не проникать непосредственно в Core.
+
+### `src/dsl/`
+
+Содержит реализацию нормативных правил:
+
+```text
+specs/dsl/
+```
+
+в виде:
+
+```text
+parser
+validator
+models
+resolver
+```
+
+---
+
+## 3.11. Структура `tests/`
+
+Предлагаемая структура:
+
+```text
+tests/
+│
+├── unit/
+│
+├── contract/
+│
+├── integration/
+│
+├── dsl/
+│
+├── repositories/
+│
+└── providers/
+    ├── forgejo/
+    └── ...
+```
+
+Особое значение имеют contract tests.
+
+Они должны проверять соответствие:
+
+```text
+specs/
+   ↕
+src/
+```
+
+Например:
+
+```text
+specs/contracts/forgejo/
+          ↕
+src/remote/providers/forgejo/
+```
+
+и:
+
+```text
+specs/dsl/
+     ↕
+src/dsl/
+```
+
+---
+
+## 3.12. Структура управляемого архитектурного репозитория
+
+Структуру конкретного архитектурного репозитория не следует смешивать со структурой исходного кода MCP.
+
+Например управляемый repository может выглядеть так:
+
+```text
+architecture-repository/
+│
+├── architecture.yaml
+│
+├── facts/
+│   ├── F-0001.md
+│   └── F-0002.md
+│
+├── requirements/
+│   ├── R-0001.md
+│   └── R-0002.md
+│
+├── categories/
+│   └── C-0001.md
+│
+├── artifacts/
+│   └── A-0001.md
+│
+├── templates/
+│   ├── fact.md
+│   ├── requirement.md
+│   ├── category.md
+│   └── artifact.md
+│
+└── .git/
+```
+
+При этом конкретные каталоги:
+
+```text
+facts/
+requirements/
+categories/
+artifacts/
+```
+
+не являются частью hardcoded структуры MCP.
+
+Их назначение определяется DSL-декларацией конкретного repository.
+
+---
+
+## 3.13. Итоговое разделение ответственности
+
+В результате проект разделяется на четыре основных слоя:
+
+```text
+specs/
+   │
+   ├── contracts/
+   │      внешние сервисы
+   │
+   ├── dsl/
+   │      язык архитектурного repository
+   │
+   └── examples/
+          примеры использования спецификаций
+
+src/
+   │
+   └── реализация этих спецификаций
+
+tests/
+   │
+   └── проверка соответствия specs ↔ src
+
+Architecture Repository
+   │
+   └── реальные пользовательские данные
+```
+
+Главный принцип:
+
+```text
+specs/
+  ↓
+определяет
+
+src/
+  ↓
+реализует
+
+tests/
+  ↓
+доказывает соответствие
+```
+
+При этом:
+
+```text
+specs/contracts/
+```
+
+определяет контракты взаимодействия с внешними сервисами,
+
+```text
+specs/dsl/
+```
+
+определяет язык описания архитектурного репозитория,
+
+а:
+
+```text
+specs/examples/declarations/
+```
+
+содержит эталонные примеры использования этого языка.
+
+# 4. Функциональные требования
+
+## 4.1. Управление локальным репозиторием
+
+### FR-REP-001 — создание репозитория
+
+MCP должен позволять создать новый локальный архитектурный Git-репозиторий.
+
+Операция должна:
+
+1. проверить target path;
+2. создать директорию;
+3. выполнить инициализацию Git;
+4. создать минимальную структуру репозитория согласно контракту;
+5. разместить выбранную DSL-декларацию;
+6. выполнить validation.
+
+---
+
+### FR-REP-002 — открытие репозитория
+
+MCP должен позволять открыть существующий локальный Git-репозиторий.
+
+Должны проверяться:
+
+* существование directory;
+* наличие Git repository;
+* repository root;
+* наличие обязательной декларации;
+* возможность разбора декларации;
+* корректность repository structure.
+
+Открытие не должно инициировать сетевые операции.
+
+---
+
+### FR-REP-003 — клонирование репозитория
+
+MCP должен позволять получить удалённый Git-репозиторий в локальное хранилище.
+
+Операция должна:
+
+```text
+remote
+ ↓
+Git clone
+ ↓
+local repository
+ ↓
+DSL validation
+```
+
+После клонирования вся дальнейшая работа выполняется локально.
+
+---
+
+### FR-REP-004 — валидация репозитория
+
+MCP должен предоставлять явную операцию полной проверки repository.
+
+Проверяются:
+
+* DSL declaration;
+* принадлежность файлов сущностям;
+* допустимость путей;
+* отсутствие конфликтующего file matching;
+* templates;
+* связи сущностей;
+* прочие правила DSL.
+
+---
+
+## 4.2. Работа с сущностями
+
+### FR-ENT-001 — получение списка сущностей
+
+MCP должен позволять получить список экземпляров указанного типа entity.
+
+Принадлежность файлов определяется исключительно DSL.
+
+---
+
+### FR-ENT-002 — чтение сущности
+
+MCP должен позволять получить конкретную сущность из локального repository.
+
+---
+
+### FR-ENT-003 — поиск сущностей
+
+MCP должен позволять искать сущности по данным локального repository в пределах возможностей DSL и Repository Model.
+
+---
+
+### FR-ENT-004 — создание сущности
+
+Если это разрешено DSL, MCP должен:
+
+1. определить entity;
+2. определить template;
+3. определить допустимый target path;
+4. создать локальный файл;
+5. проверить соответствие DSL;
+6. оставить изменение в local working tree.
+
+Операция не должна автоматически создавать commit или выполнять push.
+
+---
+
+### FR-ENT-005 — изменение сущности
+
+Изменение выполняется только локально.
+
+После изменения должна выполняться соответствующая validation.
+
+---
+
+### FR-ENT-006 — удаление сущности
+
+Если операция разрешена контрактом, удаление выполняется только в local working tree.
+
+Удаление не должно автоматически фиксироваться commit.
+
+---
+
+## 4.3. Локальные Git-операции
+
+### FR-GIT-001 — status
+
+MCP должен предоставлять Git status локального repository.
+
+---
+
+### FR-GIT-002 — diff
+
+MCP должен предоставлять diff:
+
+* working tree;
+* staged changes;
+* при необходимости между revisions.
+
+---
+
+### FR-GIT-003 — branches
+
+MCP должен поддерживать предусмотренные контрактом операции:
+
+* list;
+* create;
+* switch.
+
+Создание branch выполняется локально.
+
+---
+
+### FR-GIT-004 — commit
+
+MCP должен позволять создать локальный commit.
+
+Commit не должен автоматически инициировать push.
+
+---
+
+### FR-GIT-005 — history
+
+MCP должен предоставлять доступ к локальной Git history.
+
+Минимально:
+
+* commits;
+* commit metadata;
+* diff revision;
+* состояние repository на revision, если предусмотрено контрактом.
+
+---
+
+## 4.4. Remote configuration
+
+### FR-REMOTE-001 — remotes
+
+MCP должен поддерживать конфигурацию Git remotes.
 
 Допускается:
 
-```json
-{
-  "gitlab_token": {
-    "type": "secret",
-    "configured": true,
-    "runtime_override": true
-  }
-}
+```text
+origin
+upstream
+backup
 ```
 
-Запрещается:
+и другие имена.
 
-```json
-{
-  "gitlab_token": "glpat-..."
-}
-```
-
-После разрешения конфигурации MCP должен построить единый immutable runtime configuration object.
-
-Секреты запрещено помещать:
-
-* в DSL;
-* в Git;
-* в диагностические ответы;
-* в обычные logs.
+Имя `origin` не должно быть жёстко зашито в Core.
 
 ---
 
-## 3.3. Загрузка DSL
+### FR-REMOTE-002 — несколько remote
 
-Алгоритм:
-
-```text
-получить declaration
-        ↓
-определить declaration.version
-        ↓
-выбрать спецификацию DSL
-        ↓
-проверить Grammar
-        ↓
-проверить Presets
-        ↓
-проверить Contracts
-        ↓
-построить Runtime Repository Model
-```
-
-Если DSL невалиден, диагностические операции допускаются, но изменение архитектурных данных блокируется.
+Один локальный repository может быть связан с несколькими удалёнными repository.
 
 ---
 
-## 3.4. Runtime-модель сущностей
+### FR-REMOTE-003 — Forgejo
 
-Логическая модель:
+Первым provider-specific модулем должен быть Forgejo.
+
+Он должен реализовывать только необходимые repository-level возможности.
+
+---
+
+### FR-REMOTE-004 — отсутствие удалённых файловых операций
+
+На первом этапе не реализуются provider API операции:
 
 ```text
-EntityDefinition
-    name
-    relations[]
-    files
-        path
-            match
-            value
-        filename
-            match
-            value
-        format
-        template
+remote_file_read
+remote_file_create
+remote_file_update
+remote_file_delete
+remote_batch_file_update
 ```
 
-`name` является пользовательским уникальным значением.
+---
 
-Примеры:
+## 4.5. Получение изменений
+
+### FR-SYNC-001 — fetch/pull
+
+Получение удалённых изменений должно инициироваться отдельной командой.
+
+Перед интеграцией проверяются:
+
+* remote;
+* branch;
+* состояние working tree;
+* divergence;
+* возможность безопасной интеграции.
+
+---
+
+### FR-SYNC-002 — dirty working tree
+
+Наличие незакоммиченных изменений не должно приводить к их автоматическому уничтожению.
+
+Не допускается implicit:
+
+```text
+stash
+reset --hard
+clean
+```
+
+---
+
+### FR-SYNC-003 — conflicts
+
+Git conflicts не должны автоматически разрешаться MCP.
+
+Запрещён автоматический выбор:
+
+```text
+ours
+theirs
+```
+
+---
+
+## 4.6. Публикация
+
+### FR-PUB-001 — явная публикация
+
+Передача изменений в remote должна выполняться отдельной операцией:
+
+```text
+repository_publish
+```
+
+или эквивалентной функцией согласно контракту.
+
+---
+
+### FR-PUB-002 — Git transport
+
+Передача содержимого repository должна выполняться через Git synchronization.
+
+Provider REST API не должен использоваться для воспроизведения файловых изменений.
+
+---
+
+### FR-PUB-003 — validation
+
+До публикации должна выполняться предусмотренная контрактом validation.
+
+---
+
+### FR-PUB-004 — non-fast-forward
+
+MCP не должен автоматически обходить non-fast-forward посредством force push.
+
+---
+
+### FR-PUB-005 — отсутствие implicit push
+
+Следующие операции не должны автоматически инициировать публикацию:
+
+```text
+entity_create
+entity_update
+entity_delete
+repository_commit
+branch_create
+repository_validate
+```
+
+---
+
+## 4.7. Provider API
+
+### FR-PRV-001
+
+Provider должен быть изолирован от Core.
+
+### FR-PRV-002
+
+Provider API первого этапа может использоваться для:
+
+* authentication;
+* connection check;
+* repository existence;
+* repository metadata;
+* repository creation, если это предусмотрено контрактом;
+* получения Git remote URL.
+
+### FR-PRV-003
+
+Файлы архитектурного repository не должны изменяться через provider REST API.
+
+---
+
+# 5. Нефункциональные требования
+
+## NFR-001 — отсутствие implicit behavior
+
+Запрещены неописанные:
+
+* defaults;
+* retries;
+* commits;
+* pushes;
+* pulls;
+* merges;
+* rebases;
+* branch switches;
+* stash;
+* reset;
+* conflict resolution.
+
+---
+
+## NFR-002 — repository confinement
+
+Все файловые операции должны оставаться внутри repository root.
+
+Запрещены:
+
+* path traversal;
+* выход через `..`;
+* запись по абсолютному пути вне repository;
+* обход ограничений через symbolic links.
+
+---
+
+## NFR-003 — безопасность credentials
+
+Credentials запрещено:
+
+* сохранять в архитектурный repository;
+* сохранять в DSL;
+* возвращать через MCP;
+* выводить в logs;
+* включать в exception;
+* включать в telemetry.
+
+---
+
+## NFR-004 — offline operation
+
+Без сети должны работать:
+
+* DSL;
+* чтение repository;
+* entity operations;
+* validation;
+* local Git status;
+* diff;
+* branches;
+* commits;
+* history.
+
+---
+
+## NFR-005 — provider independence
+
+Добавление нового provider не должно требовать изменения:
+
+* DSL;
+* Entity Service;
+* Repository Model;
+* Local Git Service.
+
+---
+
+## NFR-006 — determinism
+
+Для одинакового:
+
+```text
+repository state
++
+DSL declaration
++
+input
+```
+
+операция должна давать одинаковый логический результат.
+
+---
+
+## NFR-007 — contract traceability
+
+Для каждой публичной функции должна существовать трассировка:
+
+```text
+Contract
+   ↓
+Implementation
+   ↓
+Tests
+```
+
+---
+
+## NFR-008 — testability
+
+Local Repository Service должен тестироваться без внешнего Git provider.
+
+Provider integration должна тестироваться отдельным integration layer.
+
+---
+
+NFR-008A — использование Forgejo при разработке и отладке
+
+При разработке и отладке MCP Codex может использовать тестовый Forgejo как внешний provider и среду integration tests.
+
+Параметры подключения должны браться из .forgejo.env / переменных окружения:
+
+FORGEJO_URL
+FORGEJO_API_URL
+FORGEJO_TOKEN
+FORGEJO_USERNAME
+FORGEJO_ORGANIZATION
+
+FORGEJO_DEFAULT_BRANCH
+FORGEJO_DEFAULT_PRIVATE
+FORGEJO_TLS_VERIFY
+
+Значения должны браться из подготовленного разработчиком .env. Credentials не должны попадать в source code, Git, тестовые данные, логи или исключения. Это соответствует общим требованиям проекта к credentials.
+
+FORGEJO_ORGANIZATION считается выделенной областью для разработки и integration tests. Codex может создавать в ней временные тестовые repositories, предпочтительно с префиксом:
+
+mcp-debug-
+
+Изменение или удаление repositories за пределами этой организации запрещено.
+
+Forgejo REST API используется только для provider-level операций, предусмотренных контрактами проекта: authentication, connection check, repository existence/metadata, repository creation и remote URL resolution. Работа с содержимым repositories должна выполняться через локальный Git и стандартный Git transport, а не через Forgejo file API.
+
+Перед реализацией или изменением Forgejo provider Codex должен использовать:
+
+specs/contracts/forgejo/
+
+как нормативный источник поведения. Возможности Forgejo, отсутствующие в контрактах, не должны автоматически добавляться в MCP.
+
+Общий принцип отладки:
+
+Forgejo API → управление remote repository
+
+Git/SSH → clone, fetch, pull, push
+
+Local Git Repository → основная рабочая область MCP
+
+Forgejo integration tests должны запускаться отдельно и не должны делать локальные unit/DSL/repository tests зависимыми от сети или доступности Forgejo.
+
+
+## NFR-009 — normalized errors
+
+Низкоуровневые ошибки Git, filesystem, SSH, TLS, HTTP и provider API должны преобразовываться в нормализованную error model.
+
+Например:
+
+```text
+NOT_FOUND
+CONFLICT
+PERMISSION_DENIED
+VALIDATION_ERROR
+AUTHENTICATION_ERROR
+INVALID_REPOSITORY
+DIRTY_WORKTREE
+NON_FAST_FORWARD
+GIT_ERROR
+REMOTE_ERROR
+NETWORK_ERROR
+TIMEOUT
+TLS_ERROR
+```
+
+Конкретный перечень задаётся контрактом.
+
+---
+
+## NFR-010 — extensibility
+
+Архитектура должна позволять в дальнейшем добавить:
+
+* другие Git providers;
+* semantic diff;
+* Pull/Merge Request workflow;
+* CI validation;
+* approval workflow;
+* расширение DSL;
+
+без переработки базовой модели локального repository.
+
+---
+
+# 6. Диаграммы последовательности операций
+
+## 6.1. Создание локального репозитория
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant R as Repository Service
+    participant G as Local Git
+    participant D as DSL Engine
+
+    A->>M: repository_create(path, declaration)
+    M->>R: create(path)
+    R->>G: git init
+    G-->>R: initialized
+    R->>R: create repository structure
+    R->>D: validate declaration/repository
+    D-->>R: validation result
+    R-->>M: repository
+    M-->>A: result
+```
+
+---
+
+## 6.2. Открытие существующего repository
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant R as Repository Service
+    participant G as Local Git
+    participant D as DSL Engine
+
+    A->>M: repository_open(path)
+    M->>R: inspect(path)
+    R->>G: detect repository root
+    G-->>R: root
+    R->>D: load declaration
+    D->>D: validate declaration
+    D-->>R: repository model
+    R-->>M: opened repository
+    M-->>A: result
+```
+
+---
+
+## 6.3. Клонирование remote repository
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant S as Remote Sync
+    participant G as Git
+    participant D as DSL Engine
+
+    A->>M: repository_clone(remote, path)
+    M->>S: clone(remote, path)
+    S->>G: git clone
+    G-->>S: local repository
+    S->>D: validate repository
+    D-->>S: validation result
+    S-->>M: repository
+    M-->>A: result
+```
+
+---
+
+## 6.4. Валидация repository
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant R as Repository Service
+    participant D as DSL Engine
+
+    A->>M: repository_validate()
+    M->>R: scan repository
+    R->>D: declaration + files
+    D->>D: grammar validation
+    D->>D: entity matching
+    D->>D: relation/template validation
+    D-->>R: validation report
+    R-->>M: report
+    M-->>A: report
+```
+
+---
+
+## 6.5. Получение списка сущностей
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant E as Entity Service
+    participant D as DSL Engine
+    participant R as Repository
+
+    A->>M: entity_list(type)
+    M->>E: list(type)
+    E->>D: resolve entity rules
+    D-->>E: file matching rules
+    E->>R: scan matching files
+    R-->>E: files
+    E-->>M: entities
+    M-->>A: result
+```
+
+---
+
+## 6.6. Чтение сущности
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant E as Entity Service
+    participant D as DSL Engine
+    participant R as Repository
+
+    A->>M: entity_read(entity)
+    M->>E: read(entity)
+    E->>D: resolve entity
+    D-->>E: file definition
+    E->>R: read local file
+    R-->>E: content
+    E->>D: parse/validate
+    D-->>E: entity model
+    E-->>M: entity
+    M-->>A: result
+```
+
+---
+
+## 6.7. Поиск сущностей
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant E as Entity Service
+    participant R as Repository
+    participant D as DSL Engine
+
+    A->>M: entity_search(query)
+    M->>E: search(query)
+    E->>D: determine searchable entities
+    D-->>E: rules
+    E->>R: inspect local entities
+    R-->>E: candidates
+    E-->>M: matches
+    M-->>A: result
+```
+
+---
+
+## 6.8. Создание сущности
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant E as Entity Service
+    participant D as DSL Engine
+    participant R as Repository
+
+    A->>M: entity_create(type, data)
+    M->>E: create(type, data)
+    E->>D: resolve entity + template
+    D-->>E: creation rules
+    E->>R: create local file
+    E->>D: validate created entity
+    D-->>E: validation result
+    E-->>M: changed entity
+    M-->>A: result
+```
+
+Git commit и push при этом не выполняются.
+
+---
+
+## 6.9. Изменение сущности
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant E as Entity Service
+    participant R as Repository
+    participant D as DSL Engine
+
+    A->>M: entity_update(entity, changes)
+    M->>E: update(entity, changes)
+    E->>R: read current local file
+    R-->>E: current state
+    E->>D: validate mutation
+    D-->>E: allowed
+    E->>R: write local change
+    E->>D: validate result
+    D-->>E: result
+    E-->>M: updated entity
+    M-->>A: result
+```
+
+---
+
+## 6.10. Удаление сущности
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant E as Entity Service
+    participant D as DSL Engine
+    participant R as Repository
+
+    A->>M: entity_delete(entity)
+    M->>E: delete(entity)
+    E->>D: verify operation
+    D-->>E: allowed / denied
+    E->>R: remove local file
+    R-->>E: removed
+    E-->>M: result
+    M-->>A: result
+```
+
+---
+
+## 6.11. Git status
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant G as Local Git
+
+    A->>M: repository_status()
+    M->>G: status
+    G-->>M: working tree state
+    M-->>A: normalized status
+```
+
+---
+
+## 6.12. Git diff
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant G as Local Git
+
+    A->>M: repository_diff(scope)
+    M->>G: calculate diff
+    G-->>M: Git diff
+    M-->>A: normalized diff
+```
+
+---
+
+## 6.13. Создание ветки
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant G as Local Git
+
+    A->>M: branch_create(name)
+    M->>G: validate branch state
+    G-->>M: valid
+    M->>G: create local branch
+    G-->>M: created
+    M-->>A: result
+```
+
+---
+
+## 6.14. Переключение ветки
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant G as Local Git
+
+    A->>M: branch_switch(name)
+    M->>G: inspect working tree
+    G-->>M: safe / dirty
+    M->>G: switch branch
+    G-->>M: result
+    M-->>A: result
+```
+
+---
+
+## 6.15. Создание commit
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant D as DSL Engine
+    participant G as Local Git
+
+    A->>M: repository_commit(message)
+    M->>D: validate repository
+    D-->>M: valid
+    M->>G: stage permitted changes
+    M->>G: create commit
+    G-->>M: commit ID
+    M-->>A: commit result
+```
+
+Push не выполняется.
+
+---
+
+## 6.16. Просмотр истории
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant G as Local Git
+
+    A->>M: repository_history(criteria)
+    M->>G: read local Git history
+    G-->>M: commits
+    M-->>A: normalized history
+```
+
+---
+
+## 6.17. Настройка remote
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant G as Local Git
+
+    A->>M: remote_configure(name, URL)
+    M->>M: validate configuration
+    M->>G: configure remote
+    G-->>M: result
+    M-->>A: result
+```
+
+---
+
+## 6.18. Получение изменений из remote
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant G as Local Git
+    participant R as Remote Repository
+    participant D as DSL Engine
+
+    A->>M: repository_pull(remote, branch)
+    M->>G: inspect working tree
+    G-->>M: safe
+    M->>G: fetch remote
+    G->>R: Git fetch
+    R-->>G: remote objects
+    G-->>M: remote state
+    M->>G: integrate changes
+    G-->>M: updated / conflict
+    M->>D: validate resulting repository
+    D-->>M: validation result
+    M-->>A: result
+```
+
+При конфликте автоматическое разрешение не выполняется.
+
+---
+
+## 6.19. Публикация repository
+
+```mermaid
+sequenceDiagram
+    participant A as AI Agent
+    participant M as MCP
+    participant D as DSL Engine
+    participant G as Local Git
+    participant R as Remote Repository
+
+    A->>M: repository_publish(remote, branch)
+    M->>D: validate repository
+    D-->>M: valid
+    M->>G: inspect local/remote state
+    G-->>M: safe to publish
+    M->>G: push
+    G->>R: Git push
+    R-->>G: accepted / rejected
+    G-->>M: result
+    M-->>A: publication result
+```
+
+---
+
+# 7. Принципы работы с DSL
+
+## 7.1. DSL является нормативным описанием repository
+
+MCP не должен угадывать структуру архитектурного repository.
+
+DSL определяет:
+
+* какие типы сущностей существуют;
+* где расположены их файлы;
+* какие имена файлов им соответствуют;
+* какой формат используется;
+* какой template используется;
+* какие отношения существуют между типами сущностей.
+
+---
+
+## 7.2. DSL и данные разделены
+
+```text
+DSL
+ ↓
+определяет правила
+
+Repository files
+ ↓
+содержат экземпляры сущностей
+```
+
+Например:
+
+```text
+entity: fact
+```
+
+определяется DSL.
+
+Конкретный:
+
+```text
+F-0001.md
+```
+
+является экземпляром сущности.
+
+---
+
+## 7.3. Entity names не являются глобальными presets
+
+Имена:
 
 ```text
 fact
 requirement
-network_fact
-information_security_requirement
-logical_component
-physical_server
+category
+architecture_artifact
 ```
 
-Имя сущности не является preset.
+являются identifiers конкретного repository.
 
----
-
-## 3.5. Связи сущностей
-
-Пример:
-
-```yaml
-relations:
-  - requirement
-  - category
-```
-
-Каждый элемент должен разрешаться в `name` другой объявленной сущности.
-
-Запрещаются:
-
-```text
-ссылка на отсутствующую entity
-дубли relation
-неоднозначное имя
-```
-
-Связь описывает отношение между **типами сущностей**, а не конкретными экземплярами.
-
-Например:
-
-```text
-fact ↔ requirement
-```
-
-означает, что экземпляры `fact` могут быть содержательно связаны с экземплярами `requirement`.
-
-DSL не определяет, где именно в произвольном содержимом файла хранится ссылка на конкретный экземпляр.
-
-Обратное объявление отношения не требуется.
+Добавление нового типа сущности не должно требовать изменения MCP Core.
 
 ---
 
-## 3.6. Обнаружение экземпляров
+## 7.4. Закрытая грамматика
 
-Инструмент:
-
-```text
-entity_list(entity_name, ref)
-```
-
-Алгоритм:
-
-```text
-EntityDefinition
-      ↓
-Repository Tree
-      ↓
-path matcher
-      ↓
-filename matcher
-      ↓
-EntityInstance[]
-```
-
-Минимальный результат:
-
-```text
-entity_name
-repository_path
-filename
-ref
-revision metadata
-```
-
----
-
-## 3.7. Чтение экземпляра
-
-```text
-entity_read(
-    entity_name,
-    repository_path,
-    ref
-)
-```
-
-Операция должна:
-
-1. найти сущность;
-2. проверить соответствие пути;
-3. получить файл;
-4. проверить заявленный format;
-5. вернуть содержимое и revision metadata.
-
----
-
-## 3.8. Получение связанных типов
-
-```text
-entity_relations(entity_name)
-```
-
-Например:
-
-```text
-entity_relations("fact")
-
-→ requirement
-→ category
-→ architecture_artifact
-```
-
-Runtime-граф отношений должен учитывать отношения симметрично.
-
----
-
-## 3.9. Получение template
-
-```text
-entity_template(entity_name, ref)
-```
-
-Операция:
-
-1. определяет `files.template`;
-2. валидирует безопасность пути;
-3. получает файл;
-4. проверяет соответствие `files.format`;
-5. возвращает содержимое.
-
-Template является обычным файлом.
-
-MCP не должен вводить собственный обязательный template language.
-
----
-
-## 3.10. Создание экземпляра
-
-Логическая последовательность:
-
-```text
-entity_template()
-        ↓
-AI формирует содержимое
-        ↓
-entity_create()
-```
-
-Инструмент:
-
-```text
-entity_create(
-    entity_name,
-    target_path,
-    content,
-    branch,
-    commit_message
-)
-```
-
-До изменения проверяются:
-
-```text
-entity существует
-target безопасен
-path соответствует files.path
-filename соответствует files.filename
-target отсутствует
-content соответствует files.format
-branch допустима
-```
-
----
-
-## 3.11. Изменение экземпляра
-
-```text
-entity_update(
-    entity_name,
-    repository_path,
-    content,
-    branch,
-    expected_commit,
-    commit_message
-)
-```
-
-Алгоритм:
-
-```text
-прочитать актуальную revision
-        ↓
-сравнить expected revision
-        ↓
-проверить entity
-        ↓
-проверить format
-        ↓
-commit
-```
-
-При изменении файла третьей стороной:
-
-```text
-CONFLICT
-```
-
-Автоматическое перетирание запрещено.
-
----
-
-## 3.12. Удаление экземпляра
-
-```text
-entity_delete(...)
-```
-
-Перед удалением:
-
-```text
-проверить существование
-        ↓
-проверить принадлежность entity
-        ↓
-проверить revision
-        ↓
-commit delete
-```
-
----
-
-## 3.13. Перемещение экземпляра
-
-```text
-entity_move(
-    entity_name,
-    source_path,
-    target_path,
-    ...
-)
-```
-
-Допустимо только если:
-
-```text
-source соответствует entity
-AND
-target соответствует той же entity
-```
-
-Неявная смена типа сущности посредством move запрещена.
-
----
-
-## 3.14. Batch-изменения
-
-```text
-repository_commit(actions[])
-```
-
-Поддерживаются:
-
-```text
-create
-update
-delete
-move
-```
-
-Сначала валидируется весь набор.
-
-Если хотя бы одно действие невалидно:
-
-```text
-Git commit не создаётся
-```
-
-При успешной проверке изменения выполняются одним атомарным commit.
-
----
-
-## 3.15. Ветки
-
-Поддержать:
-
-```text
-branch_list
-branch_create
-branch_delete
-```
-
-Рабочая ветка создаётся от явно указанного:
-
-```text
-branch
-tag
-commit SHA
-```
-
-### Ограничения на имя ветки
-
-Перед вызовом GitLab API MCP обязан выполнить `validate_branch_name`.
-
-Для создаваемых MCP веток вводится собственный строгий профиль совместимости.
-
-Допускаются:
-
-```text
-a-z
-0-9
--
-_
-```
-
-Рекомендуемая регулярная проверка:
-
-```regex
-^[a-z0-9][a-z0-9_-]*$
-```
-
-Таким образом допустимы:
-
-```text
-architecture-update
-architecture_2026
-req-154
-fact_cleanup
-```
-
-Недопустимы:
-
-```text
-ArchitectureUpdate
-architecture update
-architecture/update
-.architecture
-architecture.update
-architecture@update
-architecture:update
-architecture*
-```
-
-MCP должен отклонять:
-
-* пустое имя;
-* пробелы и whitespace;
-* `/`;
-* `\`;
-* `~`;
-* `^`;
-* `:`;
-* `?`;
-* `*`;
-* `[`;
-* кавычки;
-* `..`;
-* `@{`;
-* управляющие ASCII-символы;
-* имена из ровно 40 hexadecimal-символов;
-* любое имя, не соответствующее внутреннему regex-профилю.
-
-GitLab сам запрещает пробелы, а Branches API ограничивает специальные символы; GitLab также рекомендует для максимальной совместимости использовать буквы/цифры, `-` и `_`. Имена веток регистрозависимы, поэтому MCP намеренно ограничивает создаваемые им ветки нижним регистром.
-
-После локальной проверки GitLab остаётся окончательным источником истины: проект может иметь дополнительные Push Rules для branch names.
-
-MCP также должен проверить:
-
-```text
-ветка ещё не существует
-base ref существует
-пользователь имеет право создания
-имя не нарушает серверные правила GitLab
-```
-
-Default branch нельзя удалять. Protected branch нельзя удалять в обход ограничений GitLab.
-
----
-
-## 3.16. История и diff
-
-Поддержать:
-
-```text
-commit_list
-commit_get
-commit_diff
-compare_refs
-```
-
-ИИ должен иметь возможность определить:
-
-```text
-что изменилось
-когда
-в каком commit
-чем рабочая ветка отличается от target
-```
-
----
-
-## 3.17. Merge Request
-
-Поддержать:
-
-```text
-merge_request_create
-merge_request_get
-merge_request_diff
-merge_request_merge
-```
-
-Перед merge повторно проверить:
-
-```text
-MR открыт
-source branch ожидаемая
-target branch ожидаемая
-head SHA ожидаемый
-конфликт отсутствует
-итоговый DSL валиден
-```
-
-Автоматический merge без явного запроса пользователя запрещён.
-
----
-
-# 4. Нефункциональные требования
-
-## 4.1. Безопасность
-
-### Authentication
-
-GitLab token:
-
-```text
-не хранить в repository
-не хранить в DSL
-не выводить в logs
-не возвращать MCP-клиенту
-```
-
-Использовать минимально необходимые права.
-
----
-
-### TLS verification
-
-В рамках требований продукта:
-
-```text
-TLS verification = disabled by default
-```
-
-То есть стандартная проверка цепочки доверия CA по умолчанию выключена.
-
-При этом функциональность полноценной TLS verification должна присутствовать и включаться конфигурацией:
-
-```text
-TLS_VERIFY=true
-```
-
-или runtime-параметром ИИ-агента:
-
-```text
-tls_verify=true
-```
-
-Runtime-параметр имеет приоритет над `.env`.
-
-Если одновременно:
-
-```text
-tls_verify=false
-и
-SSL pin отсутствует
-```
-
-MCP должен выдавать security warning в диагностике, но не блокировать соединение.
-
----
-
-### SSL Certificate Pinning
-
-MCP должен содержать встроенный независимый механизм certificate pinning для GitLab.
-
-Назначение:
-
-```text
-не доверять произвольному сертификату только потому,
-что системная CA validation отключена
-```
-
-MCP должен иметь возможность доверять конкретному сертификату GitLab на собственном уровне.
-
-Минимально поддерживаемый вариант:
-
-```text
-SHA-256 fingerprint сертификата
-```
-
-Конфигурация:
-
-```text
-TLS_PIN_SHA256
-```
-
-или runtime:
-
-```text
-tls_pin_sha256
-```
-
-Порядок проверки соединения:
-
-```text
-TCP/TLS connection
-      ↓
-получить peer certificate
-      ↓
-вычислить SHA-256 fingerprint
-      ↓
-есть configured pin?
-      │
-      ├── нет → продолжить согласно tls_verify
-      │
-      └── да
-           ↓
-      сравнить fingerprint
-           │
-           ├── совпал → соединение разрешено
-           └── не совпал → TLS_PIN_MISMATCH
-```
-
-Несовпадение pin должно **всегда блокировать соединение**, независимо от значения:
-
-```text
-tls_verify
-```
-
-То есть допустим сценарий:
-
-```text
-tls_verify = false
-tls_pin_sha256 = configured
-```
-
-В этом случае MCP не проверяет CA-chain, но доверяет только заранее известному сертификату.
-
-Также должен быть предусмотрен локальный trust store MCP.
-
-Например:
-
-```text
-~/.config/architecture-mcp/certificate-pins.json
-```
-
-Он должен хранить:
-
-```text
-host
-port
-SHA-256 fingerprint
-optional metadata
-```
-
-Пример логической записи:
-
-```json
-{
-  "gitlab.internal.example:443": {
-    "sha256": "AB:CD:..."
-  }
-}
-```
-
-Trust store:
-
-* не является частью архитектурного Git repository;
-* не должен содержать private keys;
-* должен быть доступен только локальному пользователю MCP;
-* не должен автоматически обновлять pin при обнаружении нового сертификата.
-
-MCP рекомендуется предоставить диагностическую операцию:
-
-```text
-tls_certificate_info()
-```
-
-возвращающую:
-
-```text
-subject
-issuer
-valid_from
-valid_to
-SHA-256 fingerprint
-pin status
-```
-
-Операция не должна автоматически доверять сертификату.
-
-Добавление нового pin должно происходить только явным действием конфигурации или доверия.
-
-Не допускается автоматический TOFU без уведомления.
-
----
-
-### Path traversal
-
-Нормализовать каждый repository path.
-
-Запрещаются:
-
-```text
-absolute path
-..
-backslash escape
-URL traversal
-выход за repository root
-```
-
----
-
-### Protected branches
-
-Нельзя обходить GitLab branch protection.
-
-Прямое изменение default branch не является штатной операцией MCP.
-
----
-
-### Secrets
-
-Credentials не должны попадать:
-
-```text
-exception
-debug logs
-telemetry
-commit
-MCP response
-```
-
----
-
-### Conflict protection
-
-Mutation использует optimistic concurrency.
-
-При несовпадении revision:
-
-```text
-CONFLICT
-```
-
-а не last-write-wins.
-
----
-
-### Fail closed
-
-Запись блокируется при:
-
-```text
-invalid DSL
-ambiguous entity
-file matches multiple entities
-unknown preset
-broken relation
-unsafe path
-invalid branch name
-TLS pin mismatch
-unknown DSL version
-```
-
----
-
-## 4.2. Производительность
-
-Не скачивать весь repository при каждом запросе.
-
-Кэшировать:
-
-```text
-parsed DSL
-EntityDefinition
-compiled regex
-repository tree
-template
-```
-
-Ключ кэша должен включать:
-
-```text
-project
-ref / commit SHA
-```
-
-Изменение SHA инвалидирует соответствующий кэш.
-
-Regex компилировать один раз при построении runtime model.
-
-Batch mutation должна использовать один commit.
-
-Pagination GitLab обрабатывается прозрачно.
-
-GET-запросы допускают ограниченный retry.
-
-Mutation нельзя повторять вслепую без проверки результата предыдущего запроса.
-
-Timeout конфигурируемый.
-
-Рекомендуемое значение по умолчанию:
-
-```text
-30 seconds
-```
-
----
-
-# 5. Диаграммы последовательности операций с GitLab
-
-## 5.1. Получение дерева
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: entity_list(entity, ref)
-    M->>M: Resolve runtime config
-    M->>M: Load + validate DSL
-    M->>G: GET repository tree
-    G-->>M: Paths
-    M->>M: path + filename matching
-    M-->>A: Entity instances
-```
-
----
-
-## 5.2. Чтение файла
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: entity_read(entity, path, ref)
-    M->>M: Validate entity/path
-    M->>G: GET repository file
-    G-->>M: Content + revision
-    M->>M: Validate format
-    M-->>A: Content + metadata
-```
-
----
-
-## 5.3. Получение истории и diff
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: commit_list / commit_diff
-    M->>G: GET commits
-    G-->>M: Commit metadata
-    M->>G: GET diff
-    G-->>M: Diff
-    M-->>A: History + changes
-```
-
----
-
-## 5.4. Список веток
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: branch_list()
-    M->>G: GET branches
-    G-->>M: Branches
-    M-->>A: Branch metadata
-```
-
----
-
-## 5.5. Создание ветки
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: branch_create(name, base_ref)
-    M->>M: Validate branch name
-    M->>G: Verify base_ref
-    G-->>M: Base SHA
-    M->>G: Check branch existence
-    G-->>M: Not found
-    M->>G: POST branch
-    G-->>M: New branch
-    M-->>A: Branch + SHA
-```
-
-`Validate branch name` выполняет правила раздела 3.15 до обращения к GitLab.
-
----
-
-## 5.6. Создание файла
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: entity_create(...)
-    M->>M: Validate DSL
-    M->>M: Validate target
-    M->>M: Validate format
-    M->>G: Check target
-    G-->>M: Not found
-    M->>G: Commit create
-    G-->>M: Commit SHA
-    M-->>A: Created
-```
-
----
-
-## 5.7. Изменение файла
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: entity_update(... expected_sha)
-    M->>G: Read current revision
-    G-->>M: SHA + content
-    M->>M: Compare revisions
-
-    alt Match
-        M->>M: Validate content
-        M->>G: Commit update
-        G-->>M: Commit SHA
-        M-->>A: Updated
-    else Revision changed
-        M-->>A: CONFLICT
-    end
-```
-
----
-
-## 5.8. Удаление
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: entity_delete(...)
-    M->>G: Read current revision
-    G-->>M: Revision
-    M->>M: Validate entity/revision
-
-    alt Valid
-        M->>G: Commit delete
-        G-->>M: Commit SHA
-        M-->>A: Deleted
-    else Invalid
-        M-->>A: Error
-    end
-```
-
----
-
-## 5.9. Перемещение
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: entity_move(source, target)
-    M->>M: Validate source
-    M->>M: Validate target
-    M->>G: Verify repository state
-    G-->>M: State
-    M->>G: Commit move
-    G-->>M: Commit SHA
-    M-->>A: New path
-```
-
----
-
-## 5.10. Batch commit
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: repository_commit(actions[])
-    M->>M: Validate ALL actions
-    M->>G: Verify revisions
-    G-->>M: Current state
-
-    alt Valid
-        M->>G: Commit actions[]
-        G-->>M: Commit SHA
-        M-->>A: Atomic change
-    else Invalid
-        M-->>A: Error, no commit
-    end
-```
-
----
-
-## 5.11. Сравнение refs
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: compare_refs(base, working)
-    M->>G: GET compare
-    G-->>M: Commits + diffs
-    M-->>A: Comparison
-```
-
----
-
-## 5.12. Создание Merge Request
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: merge_request_create(source, target)
-    M->>G: Compare refs
-    G-->>M: Diff
-    M->>M: Validate resulting repository
-
-    alt Valid
-        M->>G: POST Merge Request
-        G-->>M: MR
-        M-->>A: MR metadata
-    else Invalid
-        M-->>A: Validation error
-    end
-```
-
----
-
-## 5.13. Получение Merge Request
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: merge_request_get(iid)
-    M->>G: GET Merge Request
-    G-->>M: MR state
-    M->>G: GET MR diff
-    G-->>M: Diff
-    M-->>A: State + changes
-```
-
----
-
-## 5.14. Merge
-
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    U->>A: Explicit merge request
-    A->>M: merge_request_merge(iid, expected_sha)
-    M->>G: GET Merge Request
-    G-->>M: Current state
-    M->>M: Validate SHA/status/DSL
-
-    alt Allowed
-        M->>G: Merge
-        G-->>M: Merge commit
-        M-->>A: Completed
-    else Invalid
-        M-->>A: Rejected
-    end
-```
-
----
-
-## 5.15. Удаление ветки
-
-```mermaid
-sequenceDiagram
-    participant A as AI Agent
-    participant M as MCP
-    participant G as GitLab
-
-    A->>M: branch_delete(branch)
-    M->>G: GET branch
-    G-->>M: Branch metadata
-    M->>M: Check default/protected
-
-    alt Allowed
-        M->>G: DELETE branch
-        G-->>M: Success
-        M-->>A: Deleted
-    else Protected/default
-        M-->>A: Rejected
-    end
-```
-
----
-
-# 6. Логика и принципы работы с DSL
-
-## 6.1. DSL — декларация репозитория
-
-DSL отвечает:
-
-```text
-что существует
-где находится
-как определить файл
-какого он формата
-из какого template создаётся
-с какими сущностями связан
-```
-
-DSL не определяет внутреннюю бизнес-структуру документа.
-
----
-
-## 6.2. Закрытая Grammar
-
-```yaml
-declaration:
-  kind: architecture_repository
-  version: v2
-
-entities:
-  ...
-```
+Структурные элементы DSL должны образовывать закрытую грамматику.
 
 Неизвестный structural key является ошибкой.
 
 ---
 
-## 6.3. Presets
+## 7.5. Presets являются закрытыми
 
-Preset-значения берутся только из:
+Значения полей, определённых как presets, должны принадлежать зарегистрированному перечню.
 
-```text
-dsl/DSL_V2_TABLES.yaml
-```
-
-Добавлять новый preset непосредственно в код запрещено.
+Новые произвольные значения в preset-поле не допускаются.
 
 ---
 
-## 6.4. Произвольные значения
+## 7.6. Явные пользовательские значения
 
-Произвольными являются:
+Произвольные значения разрешаются только там, где это прямо предусмотрено DSL.
 
-```text
-entity.name
-files.path.value
-files.filename.value
-files.template
-```
+Например:
 
-`relations[]` содержат пользовательские идентификаторы, но обязаны разрешаться в существующий `entity.name`.
-
----
-
-## 6.5. Имена сущностей
-
-Допустимы произвольные уникальные логические имена:
-
-```text
-fact
-requirement
-network_security_requirement
-logical_component
-```
-
-Добавление новой сущности не требует расширения preset registry.
+* entity identifier;
+* entity relation;
+* repository-relative path;
+* filename rule;
+* template path.
 
 ---
 
-## 6.6. Relations
+## 7.7. Нет implicit logic
+
+DSL не должен использовать:
+
+* вычисляемые переменные;
+* скрытые defaults;
+* inferred entities;
+* автоматически создаваемые relations;
+* неявные преобразования типов;
+* скрытые write targets.
+
+---
+
+## 7.8. Repository-defined relations
+
+Relations связывают объявленные типы сущностей.
+
+Например:
 
 ```yaml
-- name: fact
-  relations:
-    - requirement
-    - category
+entities:
+
+  - name: fact
+    relations:
+      - requirement
+      - category
 ```
 
-материализует:
+`requirement` и `category` должны существовать среди объявленных entity.
+
+DSL описывает допустимость смысловой связи между типами сущностей, но не обязан описывать конкретную связь экземпляров:
 
 ```text
-fact ↔ requirement
-fact ↔ category
+F-0001 → R-0007
 ```
 
-Но не создаёт автоматических отношений между конкретными экземплярами.
+Такая информация относится к данным repository.
 
 ---
 
-## 6.7. File matching
+## 7.9. Файловая модель определяется декларацией
 
-Каждая сущность определяет файл двумя независимыми характеристиками:
-
-```yaml
-files:
-  path:
-    match: ...
-    value: ...
-
-  filename:
-    match: ...
-    value: ...
-```
-
-### `path`
-
-`path` означает **только путь к каталогу, в котором расположен файл**, относительно корня Git repository.
-
-В `path` **не входит имя самого файла**.
-
-Например, для полного repository path:
+DSL должен позволять определить:
 
 ```text
-systems/payment/facts/F-0042.md
+path
+filename
+format
+template
 ```
 
-MCP должен разделить его на:
+для каждого entity.
+
+MCP не должен содержать hardcoded:
 
 ```text
-path:
-systems/payment/facts
-
-filename:
-F-0042.md
+facts/
+requirements/
+categories/
 ```
+
+---
+
+## 7.10. Template является стартовым содержимым
+
+Template используется при создании нового экземпляра сущности.
+
+После создания экземпляр становится самостоятельным repository file.
+
+---
+
+## 7.11. DSL не управляет Git
+
+DSL не должен определять:
+
+```text
+remote URL
+credentials
+Git branch
+push policy
+authentication
+SSH key
+provider token
+```
+
+Это runtime/repository configuration.
+
+---
+
+## 7.12. DSL validation отделена от Git validation
+
+Необходимо различать:
+
+```text
+DSL validation
+```
+
+и:
+
+```text
+Git repository validation
+```
+
+Например:
+
+```text
+невалидная декларация
+```
+
+является DSL-проблемой.
+
+```text
+non-fast-forward
+```
+
+является Git-проблемой.
+
+---
+
+## 7.13. Примеры DSL являются исполняемой документацией
+
+Каждый файл в:
+
+```text
+examples/declarations/
+```
+
+должен:
+
+1. соответствовать текущей версии DSL;
+2. проходить автоматический validator;
+3. использоваться в regression tests;
+4. обновляться при изменении semantic contract DSL.
+
+---
+
+## 7.14. Версионирование DSL
+
+Версия DSL является semantic boundary.
+
+Изменение существующего смысла стабильной версии запрещается.
+
+Новое несовместимое поведение должно оформляться новой версией DSL.
+
+---
+
+# 8. Дорожная карта
+
+## Этап 1. Нормализация контрактов
+
+Цель:
+
+зафиксировать публичную модель будущего MCP.
+
+Необходимо:
+
+* привести contracts к модели local-repository-first;
+* удалить требования прямого remote file API;
+* определить Repository API;
+* определить Entity API;
+* определить Local Git API;
+* определить Remote Sync API;
+* определить error model;
+* определить runtime configuration.
+
+Результат:
+
+```text
+contracts
++
+public function inventory
++
+error inventory
+```
+
+---
+
+## Этап 2. DSL Engine
+
+Реализовать:
+
+* DSL parser;
+* closed grammar validation;
+* preset validation;
+* entity resolution;
+* relations validation;
+* path/filename matching;
+* template resolution;
+* repository validation.
+
+Добавить автоматическую проверку:
+
+```text
+examples/declarations/*
+```
+
+Результат:
+
+```text
+валидатор DSL
++
+Repository Model
+```
+
+---
+
+## Этап 3. Local Repository Service
+
+Реализовать:
+
+* repository_create;
+* repository_open;
+* repository validation;
+* repository root confinement;
+* безопасные filesystem operations.
+
+На этом этапе сеть не требуется.
+
+Результат:
+
+```text
+MCP
+ ↓
+Local Repository
+```
+
+---
+
+## Этап 4. Entity Service
+
+Реализовать предусмотренные контрактами:
+
+* entity_list;
+* entity_read;
+* entity_search;
+* entity_create;
+* entity_update;
+* entity_delete.
+
+Все операции выполняются только локально.
+
+Результат:
+
+```text
+AI
+ ↓
+MCP Entity API
+ ↓
+DSL
+ ↓
+Local Files
+```
+
+---
+
+## Этап 5. Local Git Service
+
+Реализовать:
+
+* status;
+* diff;
+* history;
+* local branches;
+* commit;
+* remotes.
+
+Не реализовывать автоматический push.
+
+Результат:
+
+```text
+Architecture Repository
++
+Local Git history
+```
+
+---
+
+## Этап 6. Remote Sync abstraction
+
+Создать provider-independent интерфейс для:
+
+* remote connection;
+* fetch;
+* clone;
+* pull/integration;
+* publication/push;
+* remote metadata при необходимости.
+
+Результат:
+
+```text
+Local Git
+ ↓
+Remote Sync Interface
+```
+
+---
+
+## Этап 7. Forgejo provider
+
+Первым remote provider реализовать Forgejo.
+
+На первом этапе оставить только необходимые общие операции:
+
+* authentication;
+* connection;
+* repository existence;
+* repository metadata;
+* repository creation, если требуется;
+* remote URL resolution.
+
+Git-содержимое передавать через стандартный Git transport.
+
+Не реализовывать Forgejo file API.
+
+---
+
+## Этап 8. Синхронизация
+
+Реализовать:
+
+```text
+repository_clone
+repository_pull
+repository_publish
+```
+
+с обработкой:
+
+* dirty working tree;
+* divergence;
+* authentication;
+* network errors;
+* non-fast-forward;
+* conflicts.
+
+Запретить:
+
+* implicit merge resolution;
+* force push;
+* implicit stash/reset.
+
+---
+
+## Этап 9. Полный набор тестов
+
+Реализовать:
+
+### Unit tests
 
 Для:
 
-```text
-requirements/security/R-0017.yaml
-```
+* DSL;
+* Core;
+* Repository;
+* Entity Service;
+* Local Git.
 
-получаем:
+### Contract tests
 
-```text
-path:
-requirements/security
+Проверить:
 
-filename:
-R-0017.yaml
-```
+* наличие всех функций;
+* отсутствие лишних публичных функций;
+* input/output models;
+* errors;
+* отсутствие implicit operations.
 
-Для файла непосредственно в корне repository:
+### Integration tests
 
-```text
-README.md
-```
-
-нормализованное значение:
+Проверить:
 
 ```text
-path = ""
-filename = "README.md"
-```
-
-`path` всегда:
-
-* repository-relative;
-* без имени файла;
-* использует POSIX separator `/`;
-* не начинается с `/`;
-* после нормализации не заканчивается `/`;
-* для repository root представлен пустой строкой.
-
-Пример правила:
-
-```yaml
-path:
-  match: exact
-  value: "facts"
-```
-
-соответствует:
-
-```text
-facts/F-0001.md
-facts/F-0002.md
-```
-
-но не соответствует:
-
-```text
-systems/payment/facts/F-0001.md
-```
-
-Regex:
-
-```yaml
-path:
-  match: regex
-  value: "^systems/[^/]+/facts$"
-```
-
-может соответствовать:
-
-```text
-systems/payment/facts
-systems/crm/facts
-systems/iam/facts
+Local repository
+      ↕
+Git
+      ↕
+Forgejo
 ```
 
 ---
 
-### `filename`
+## Этап 10. Semantic Git capabilities
 
-`filename` означает **только basename файла**, без пути к каталогу.
+После стабилизации основной модели добавить:
+
+* semantic diff;
+* определение изменённых entities;
+* сравнение architecture revisions;
+* анализ изменений требований;
+* историю конкретной сущности.
 
 Например:
 
 ```text
-systems/payment/facts/F-0042.md
-```
-
-даёт:
-
-```text
-filename = F-0042.md
-```
-
-Правило:
-
-```yaml
-filename:
-  match: regex
-  value: "^F-[0-9]{4}\\.md$"
-```
-
-проверяется только против:
-
-```text
-F-0042.md
-```
-
-и никогда не против:
-
-```text
-systems/payment/facts/F-0042.md
+Git diff
+   ↓
+changed files
+   ↓
+DSL resolution
+   ↓
+changed entities
 ```
 
 ---
 
-### Итоговое правило принадлежности
+## Этап 11. Расширение provider-модели
 
-Файл принадлежит сущности только если одновременно:
+После стабилизации Forgejo могут быть добавлены:
 
-```text
-path rule matches directory path
-AND
-filename rule matches basename
-```
+* GitLab;
+* GitHub;
+* Gitea;
+* другие Git providers.
 
-Пример:
-
-```yaml
-files:
-  path:
-    match: regex
-    value: "^systems/[^/]+/facts$"
-
-  filename:
-    match: regex
-    value: "^F-[0-9]{4}\\.md$"
-```
-
-Файл:
-
-```text
-systems/payment/facts/F-0042.md
-```
-
-разбирается:
-
-```text
-path     = systems/payment/facts
-filename = F-0042.md
-```
-
-Проверка:
-
-```text
-path regex     → MATCH
-filename regex → MATCH
-                  ↓
-           entity instance
-```
-
-Файл:
-
-```text
-systems/payment/docs/F-0042.md
-```
-
-даёт:
-
-```text
-path regex     → NO MATCH
-filename regex → MATCH
-                  ↓
-             NOT ENTITY
-```
-
-Файл:
-
-```text
-systems/payment/facts/readme.md
-```
-
-даёт:
-
-```text
-path regex     → MATCH
-filename regex → NO MATCH
-                  ↓
-             NOT ENTITY
-```
-
-`match=exact` всегда означает полное совпадение нормализованного значения.
-
-`match=regex` также применяется ко всему значению, то есть семантически соответствует `fullmatch`, а не поиску substring.
-
-Regex компилируется один раз при построении runtime model.
+Добавление provider не должно изменять DSL или Entity Service.
 
 ---
 
-## 6.8. Неоднозначность запрещена
+## Этап 12. Расширенный collaboration workflow
 
-Если один файл соответствует двум сущностям:
+Отдельным последующим этапом могут быть добавлены:
 
-```text
-Entity A ─┐
-          ├── file
-Entity B ─┘
-```
+* Pull Request / Merge Request;
+* review;
+* approval;
+* CI validation;
+* protected branch policies;
+* автоматизированные architecture checks.
 
-repository state считается невалидным.
-
-MCP не выбирает сущность самостоятельно.
-
----
-
-## 6.9. Format
-
-`format` определяет только синтаксический parser/validator.
-
-Например:
-
-```text
-yaml
-json
-markdown
-markdown_front_matter
-text
-```
-
-MCP Core не валидирует бизнес-смысл содержимого.
+Эти функции не входят в минимальное ядро MCP и не должны блокировать реализацию локальной модели.
 
 ---
 
-## 6.10. Template
-
-Template:
+# Итоговая целевая модель
 
 ```text
-обычный файл
-того же format
-расположен в repository
-используется для создания экземпляра
+                    ┌─────────────────┐
+                    │    AI / Goose   │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │    MCP Server   │
+                    └────────┬────────┘
+                             │
+              ┌──────────────┼───────────────┐
+              │              │               │
+              ▼              ▼               ▼
+          DSL Engine    Entity Service   Git Service
+              │              │               │
+              └──────────────┼───────────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Local Git Repo  │
+                    └────────┬────────┘
+                             │
+                       explicit sync
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Remote Git Repo │
+                    └─────────────────┘
 ```
 
-Template не является schema.
+**Локальный Git-репозиторий является источником текущего рабочего состояния MCP.**
 
-После создания экземпляр может свободно редактироваться.
+**DSL определяет смысл и организацию его содержимого.**
 
----
+**Git обеспечивает историю и версионирование.**
 
-## 6.11. Runtime Index
-
-Рекомендуемая модель:
-
-```text
-RepositoryModel
-
-entities_by_name
-relations_graph
-compiled_path_matchers
-compiled_filename_matchers
-instances_by_entity
-entity_by_repository_path
-```
-
----
-
-## 6.12. Работа ИИ-агента
-
-Штатный путь:
-
-```text
-User intent
-    ↓
-AI reasoning
-    ↓
-MCP operation
-    ↓
-DSL validation
-    ↓
-GitLab
-```
-
-ИИ не должен обходить DSL прямыми операциями GitLab, если соответствующая MCP-операция существует.
-
-DSL является governance layer между агентом и архитектурным репозиторием.
-
----
-
-# 7. Дорожная карта
-
-[ ] Создать базовую структуру Python-проекта и `.venv`.
-
-[ ] Реализовать загрузку `.env`.
-
-[ ] Реализовать runtime configuration interface для ИИ-агента.
-
-[ ] Реализовать приоритет `AI runtime > .env > defaults`.
-
-[ ] Реализовать `configuration_schema()` без раскрытия секретных значений.
-
-[ ] Создать `dsl/DSL_V2_TABLES.yaml`.
-
-[ ] Зафиксировать Grammar, Presets и Contracts DSL v2.
-
-[ ] Добавить генерируемый `docs/dsl/DSL_V2_TABLES.md`.
-
-[ ] Создать `examples/declarations/`.
-
-[ ] Создать `examples/templates/`.
-
-[ ] Создать positive и negative примеры деклараций.
-
-[ ] Реализовать DSL parser.
-
-[ ] Реализовать closed-grammar validation.
-
-[ ] Реализовать preset validation.
-
-[ ] Реализовать validation произвольных `entity.name`.
-
-[ ] Реализовать уникальность сущностей.
-
-[ ] Реализовать `relations[] → entity.name`.
-
-[ ] Реализовать runtime relations graph.
-
-[ ] Реализовать нормализацию repository path.
-
-[ ] Реализовать разбиение полного пути на `path` и `filename`.
-
-[ ] Реализовать `path.match=exact`.
-
-[ ] Реализовать `path.match=regex`.
-
-[ ] Реализовать `filename.match=exact`.
-
-[ ] Реализовать `filename.match=regex`.
-
-[ ] Реализовать overlap detection.
-
-[ ] Реализовать GitLab API client.
-
-[ ] Реализовать TLS verification с `false` по умолчанию.
-
-[ ] Реализовать SHA-256 certificate pinning.
-
-[ ] Реализовать локальный certificate pin trust store.
-
-[ ] Реализовать `tls_certificate_info()`.
-
-[ ] Реализовать отказ соединения при `TLS_PIN_MISMATCH`.
-
-[ ] Реализовать безопасную работу с credentials.
-
-[ ] Реализовать Repository Tree pagination.
-
-[ ] Реализовать Runtime Repository Model.
-
-[ ] Реализовать `entity_list`.
-
-[ ] Реализовать `entity_read`.
-
-[ ] Реализовать `entity_relations`.
-
-[ ] Реализовать `entity_template`.
-
-[ ] Реализовать format validators.
-
-[ ] Реализовать `branch_list`.
-
-[ ] Реализовать строгий `validate_branch_name`.
-
-[ ] Реализовать проверку серверных GitLab Push Rules.
-
-[ ] Реализовать `branch_create`.
-
-[ ] Реализовать `branch_delete`.
-
-[ ] Реализовать `entity_create`.
-
-[ ] Реализовать optimistic concurrency.
-
-[ ] Реализовать `entity_update`.
-
-[ ] Реализовать `entity_delete`.
-
-[ ] Реализовать `entity_move`.
-
-[ ] Реализовать batch `repository_commit`.
-
-[ ] Реализовать `commit_list`.
-
-[ ] Реализовать `commit_get`.
-
-[ ] Реализовать `commit_diff`.
-
-[ ] Реализовать `compare_refs`.
-
-[ ] Реализовать `merge_request_create`.
-
-[ ] Реализовать `merge_request_get`.
-
-[ ] Реализовать `merge_request_diff`.
-
-[ ] Реализовать `merge_request_merge` только после явного запроса.
-
-[ ] Реализовать cache DSL по commit SHA.
-
-[ ] Реализовать cache repository tree по commit SHA.
-
-[ ] Реализовать automatic cache invalidation.
-
-[ ] Реализовать path traversal protection.
-
-[ ] Реализовать защиту default/protected branch.
-
-[ ] Реализовать нормализованную модель ошибок MCP.
-
-[ ] Добавить unit tests всех DSL-контрактов.
-
-[ ] Добавить exhaustive tests preset-значений.
-
-[ ] Добавить tests `path` / `filename` decomposition.
-
-[ ] Добавить tests file matcher overlap.
-
-[ ] Добавить tests branch name validation.
-
-[ ] Добавить tests runtime configuration precedence.
-
-[ ] Добавить TLS pinning positive/negative tests.
-
-[ ] Добавить integration tests GitLab read operations.
-
-[ ] Добавить integration tests branch → commit → MR.
-
-[ ] Добавить integration tests конфликтующих изменений.
-
-[ ] Добавить integration tests atomic multi-file commit.
-
-[ ] Добавить security tests path traversal.
-
-[ ] Добавить security tests credential leakage.
-
-[ ] Добавить performance tests больших repository tree.
-
-[ ] Добавить README.
-
-[ ] Добавить AGENTS.md.
-
-[ ] Провести полный автоматизированный аудит DSL v2.
-
-[ ] Проверить отсутствие undocumented Grammar/Presets в коде.
-
-[ ] Зафиксировать DSL v2 после прохождения полного набора positive/negative тестов.
+**Remote provider обеспечивает внешнее хранение и синхронизацию, но не участвует непосредственно в редактировании архитектурных файлов.**

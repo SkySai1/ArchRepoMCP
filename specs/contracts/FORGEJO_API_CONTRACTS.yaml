@@ -1,0 +1,1667 @@
+contract_schema:
+  name: architecture-mcp-provider-contracts
+  version: '1.0'
+  status: draft-for-implementation
+  language: ru
+provider:
+  name: forgejo
+  provider_contract_version: '1.0'
+  upstream_family: Forgejo REST API v1
+  implementation_baseline: Forgejo 16.x
+  api_prefix: /api/v1
+  swagger_ui: /api/swagger
+  version_endpoint: /api/v1/version
+  compatibility_policy:
+  - Публичный контракт MCP стабилен относительно конкретного patch-релиза Forgejo.
+  - Transport mapping обязательно проверяется integration/contract tests против Swagger целевого Forgejo instance.
+  - Если endpoint/поле отсутствует на целевом instance, adapter возвращает PROVIDER_CAPABILITY_GAP и не придумывает fallback.
+  - Наличие дополнительной upstream-функции Forgejo не делает её частью MCP автоматически.
+scope:
+  included_modules:
+  - system
+  - repository
+  - branches
+  - commits
+  - pull_requests
+  - actions
+  explicitly_excluded_from_v1:
+  - instance administration
+  - user administration
+  - organization administration
+  - repository create/delete/edit settings
+  - branch protection create/edit/delete
+  - collaborator/team management
+  - Actions secrets and variables management
+  - Actions runner registration/management
+  - package registry
+  - releases
+  - wiki
+  - issues/projects
+  - webhook administration
+  - mirror administration
+  principle: Contract defines only the Forgejo surface required by Architecture MCP; it is not a mirror of the complete Forgejo
+    OpenAPI.
+runtime_configuration:
+  precedence:
+  - ai_runtime
+  - .env
+  - internal_defaults
+  immutable_after_resolution: true
+  fields:
+    forgejo_url:
+      env: FORGEJO_URL
+      type: url
+      required: true
+      secret: false
+    forgejo_owner:
+      env: FORGEJO_OWNER
+      type: string
+      required: true
+      secret: false
+    forgejo_repository:
+      env: FORGEJO_REPOSITORY
+      type: string
+      required: true
+      secret: false
+    forgejo_token:
+      env: FORGEJO_TOKEN
+      type: secret
+      required: true
+      secret: true
+      never_return: true
+      never_log: true
+    target_branch:
+      env: FORGEJO_TARGET_BRANCH
+      type: string|null
+      required: false
+      default: null
+      resolution: if null, use repository.default_branch
+    request_timeout_seconds:
+      env: REQUEST_TIMEOUT
+      type: number
+      required: false
+      default: 30
+      minimum: 1
+    tls_verify:
+      env: TLS_VERIFY
+      type: boolean
+      required: false
+      default: false
+      warning: Project-level compatibility requirement. When false and no pin is configured, emit SECURITY_WARNING.
+    tls_pin_sha256:
+      env: TLS_PIN_SHA256
+      type: string|null
+      required: false
+      default: null
+      secret: false
+    max_log_bytes:
+      env: FORGEJO_MAX_LOG_BYTES
+      type: integer
+      required: false
+      default: 10485760
+    max_artifact_bytes:
+      env: FORGEJO_MAX_ARTIFACT_BYTES
+      type: integer
+      required: false
+      default: 52428800
+transport_contract:
+  base_url_rule: '{forgejo_url}/api/v1'
+  authentication:
+    method: personal_access_token
+    header: Authorization
+    format: token <FORGEJO_TOKEN>
+    query_parameter_tokens: forbidden
+    basic_password_auth: not_used_by_this_provider
+    sudo_headers_or_params: forbidden
+    minimum_permissions_rule: Grant only repository permissions needed by enabled contracts; do not grant instance-admin rights.
+  headers:
+    Accept: application/json where endpoint is JSON
+    Content-Type: application/json for JSON mutation bodies
+    User-Agent: architecture-mcp/<version>
+  tls:
+    pin_check_precedence: pin mismatch always blocks, regardless of tls_verify
+    pin_error: TLS_PIN_MISMATCH
+    verify_false_without_pin: allowed_with_security_warning
+  retry:
+    read_only: bounded retry allowed for connection errors and selected transient 5xx
+    mutation: blind retry forbidden
+    mutation_timeout_result: UNKNOWN_MUTATION_RESULT unless state is deterministically reconciled before retry
+  pagination:
+    upstream_pattern: page + limit
+    first_page: 1
+    rule: Provider adapter must not treat page 1 as the complete collection.
+validation_contracts:
+  repository_path:
+    type: string
+    rules:
+    - repository-relative
+    - POSIX separator /
+    - must not start with /
+    - must not contain backslash
+    - must not contain .. path segment
+    - must not escape repository root
+    - percent-decoding must not create traversal
+    - empty path allowed only where operation explicitly accepts repository root
+    error: UNSAFE_PATH
+  branch_name_for_creation:
+    type: string
+    regex: ^[a-z0-9][a-z0-9_-]*$
+    additional_forbidden:
+    - whitespace
+    - /
+    - \
+    - '~'
+    - ^
+    - ':'
+    - '?'
+    - '*'
+    - '['
+    - quotes
+    - ..
+    - '@{'
+    - ASCII control characters
+    - exactly 40 hexadecimal characters
+    error: INVALID_BRANCH_NAME
+    note: Read/delete of pre-existing branches may accept names outside this MCP creation profile if safe to URL-encode.
+  git_sha:
+    type: string
+    rules:
+    - non-empty
+    - treated as opaque hexadecimal Git object identifier unless upstream requires stricter validation
+normalized_models:
+  file_action:
+    operation: create|update|delete|move
+    path: repository_path; target path for move
+    source_path: repository_path; required only for move
+    content: utf8_string; required for create/update; optional for move depending upstream schema
+    expected_file_sha: git_sha; required for update/delete/move
+  page_meta:
+    page: integer|null
+    limit: integer|null
+    has_more: boolean|null
+    total: integer|null
+  identity:
+    name: string|null
+    email: string|null
+    username: string|null
+  git_ref:
+    sha: string
+    url: string|null
+  branch:
+    name: string
+    commit_sha: string
+    protected: boolean|null
+  commit:
+    sha: string
+    message: string|null
+    author: identity|null
+    committer: identity|null
+    created_at: datetime|null
+  changed_file:
+    filename: string|null
+    status: string|null
+    additions: integer|null
+    deletions: integer|null
+    changes: integer|null
+  pull_request:
+    index: integer
+    number: integer|null
+    state: string
+    title: string|null
+    head_ref: string
+    head_sha: string
+    base_ref: string
+    merged: boolean|null
+    mergeable: boolean|null
+    draft: boolean|null
+  commit_status:
+    context: string|null
+    status: pending|success|error|failure|warning|skipped|unknown
+    description: string|null
+    target_url: string|null
+  action_run:
+    id: integer
+    run_number: integer|null
+    status: string|null
+    event: string|null
+    head_branch: string|null
+    head_sha: string|null
+  action_job:
+    id: integer
+    name: string|null
+    status: string|null
+    attempt: integer|null
+    started_at: datetime|null
+    completed_at: datetime|null
+  action_artifact:
+    id: integer
+    name: string
+    size_in_bytes: integer|null
+    expired: boolean|null
+    created_at: datetime|null
+    expires_at: datetime|null
+error_model:
+  envelope:
+    code: string
+    message: string
+    retryable: boolean
+    provider_status: integer|null
+    details: object|null
+  codes:
+    CONFIGURATION_ERROR:
+      retryable: false
+    AUTHENTICATION_ERROR:
+      retryable: false
+      http:
+      - 401
+    PERMISSION_DENIED:
+      retryable: false
+      http:
+      - 403
+    NOT_FOUND:
+      retryable: false
+      http:
+      - 404
+    CONFLICT:
+      retryable: false
+      http:
+      - 409
+    VALIDATION_ERROR:
+      retryable: false
+      http:
+      - 400
+      - 422
+    REPOSITORY_ARCHIVED:
+      retryable: false
+      http:
+      - 423
+    RATE_LIMITED:
+      retryable: true
+      http:
+      - 429
+    PROVIDER_ERROR:
+      retryable: depends_on_status
+      http:
+      - 5xx
+    TIMEOUT:
+      retryable: true
+    UNKNOWN_MUTATION_RESULT:
+      retryable: false
+    TLS_ERROR:
+      retryable: false
+    TLS_PIN_MISMATCH:
+      retryable: false
+    UNSAFE_PATH:
+      retryable: false
+    INVALID_BRANCH_NAME:
+      retryable: false
+    PROTECTED_BRANCH:
+      retryable: false
+    CHECKS_NOT_PASSED:
+      retryable: false
+    USER_AUTHORIZATION_REQUIRED:
+      retryable: false
+    PROVIDER_CAPABILITY_GAP:
+      retryable: false
+    TYPE_MISMATCH:
+      retryable: false
+    UNSUPPORTED_CONTENT_ENCODING:
+      retryable: false
+    RESPONSE_TOO_LARGE:
+      retryable: false
+  secrets_rule: Neither provider response body nor normalized error details may contain token, Authorization header, cookies,
+    or TLS private material.
+global_governance_contracts:
+- id: FJ-GOV-001
+  rule: Forgejo adapter never bypasses Architecture DSL. Core entity operations must validate DSL before mutation.
+- id: FJ-GOV-002
+  rule: Normal mutation workflow is target branch -> working branch -> commit(s) -> Pull Request -> explicit human-authorized
+    merge.
+- id: FJ-GOV-003
+  rule: Automatic merge without an explicit current user request is forbidden.
+- id: FJ-GOV-004
+  rule: Optimistic concurrency is mandatory for file update/delete/move.
+- id: FJ-GOV-005
+  rule: Provider restrictions and branch protection are authoritative and must not be circumvented.
+- id: FJ-GOV-006
+  rule: No public provider function may be added only because upstream Forgejo exposes it; it must first be added to this
+    contract.
+- id: FJ-GOV-007
+  rule: No provider-specific HTTP endpoint may be called directly from MCP Core; only Forgejo adapter owns endpoint knowledge.
+functions:
+- id: FJ-SYS-001
+  name: provider_version
+  module: system
+  purpose: Получить версию Forgejo и подтвердить доступность REST API.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /version
+    operation_id: getVersion
+    response_type: json
+  inputs: {}
+  output:
+    version: string
+    provider: 'constant: forgejo'
+  rules:
+  - Вызывается через API prefix /api/v1.
+  - Не раскрывает конфигурацию и credentials.
+  - Используется readiness/compatibility check, а не как основание автоматически менять публичный контракт.
+  errors:
+  - AUTHENTICATION_ERROR
+  - TIMEOUT
+  - TLS_ERROR
+  - PROVIDER_ERROR
+- id: FJ-REPO-001
+  name: repository_get
+  module: repository
+  purpose: Получить метаданные настроенного архитектурного репозитория.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}
+    operation_id: repoGet
+    response_type: json
+  inputs: {}
+  output:
+    id: integer|null
+    owner: string
+    name: string
+    full_name: string
+    default_branch: string
+    private: boolean|null
+    archived: boolean|null
+    permissions: object|null
+    html_url: string|null
+  rules:
+  - owner и repo берутся только из immutable runtime configuration.
+  - Операция не должна позволять переключиться на другой repository через аргументы вызова.
+  errors:
+  - NOT_FOUND
+  - AUTHENTICATION_ERROR
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - TLS_ERROR
+  - PROVIDER_ERROR
+- id: FJ-REPO-002
+  name: repository_tree
+  module: repository
+  purpose: Получить дерево файлов/каталогов указанного ref для построения Runtime Repository Model.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/git/trees/{sha}
+    operation_id: getTree
+    response_type: json
+  inputs:
+    ref:
+      type: string
+      required: true
+      description: branch, tag или commit SHA
+    recursive:
+      type: boolean
+      required: false
+      default: true
+  output:
+    ref: string
+    sha: string
+    entries:
+    - path: string
+      type: blob|tree|commit|unknown
+      sha: string|null
+      size: integer|null
+    truncated: boolean|null
+  rules:
+  - Adapter должен URL-encode ref как path parameter.
+  - При recursive=true должен запрашиваться recursive tree, если это поддерживает target-instance Swagger.
+  - Repository-relative paths нормализуются в POSIX-форме.
+  - Абсолютные пути и traversal не допускаются в нормализованном результате.
+  - Если target Forgejo не поддерживает recursive tree в требуемом виде, вернуть PROVIDER_CAPABILITY_GAP; не эмулировать скрытым
+    git clone.
+  errors:
+  - NOT_FOUND
+  - PERMISSION_DENIED
+  - PROVIDER_CAPABILITY_GAP
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-REPO-003
+  name: repository_file_get
+  module: repository
+  purpose: Прочитать один файл репозитория по repository-relative path.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/contents/{filepath}
+    operation_id: repoGetContents
+    response_type: json
+  inputs:
+    path:
+      type: repository_path
+      required: true
+    ref:
+      type: string
+      required: true
+  output:
+    path: string
+    name: string
+    sha: string
+    last_commit_sha: string|null
+    size: integer|null
+    content: utf8_string
+    encoding: 'constant: utf-8'
+  rules:
+  - До HTTP-вызова выполнить validate_repository_path.
+  - Forgejo content, возвращаемый как base64, декодируется внутри adapter.
+  - Наружу base64 не является частью публичного provider contract.
+  - Если содержимое не декодируется как UTF-8, вернуть UNSUPPORTED_CONTENT_ENCODING.
+  - Directory response не принимается как файл и возвращает TYPE_MISMATCH.
+  errors:
+  - NOT_FOUND
+  - UNSAFE_PATH
+  - TYPE_MISMATCH
+  - UNSUPPORTED_CONTENT_ENCODING
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-REPO-004
+  name: repository_file_create
+  module: repository
+  purpose: Создать один новый файл одним commit в существующей рабочей ветке.
+  exposure: provider_interface
+  mutation: true
+  upstream:
+    method: POST
+    path: /repos/{owner}/{repo}/contents/{filepath}
+    operation_id: repoCreateFile
+    response_type: json
+  inputs:
+    path:
+      type: repository_path
+      required: true
+    content:
+      type: utf8_string
+      required: true
+    branch:
+      type: branch_name
+      required: true
+    commit_message:
+      type: string
+      required: true
+      min_length: 1
+    signoff:
+      type: boolean
+      required: false
+      default: false
+  output:
+    path: string
+    file_sha: string|null
+    commit_sha: string
+  rules:
+  - До HTTP-вызова выполнить validate_repository_path и validate_branch_name.
+  - Adapter кодирует content в base64.
+  - 'new_branch не используется этой функцией: branch обязана существовать заранее.'
+  - Если target уже существует, операция должна завершиться CONFLICT.
+  - Прямое изменение default branch блокируется Core governance, если пользователь явно не использует административный сценарий
+    вне штатного workflow.
+  - Mutation не повторяется вслепую после network timeout.
+  errors:
+  - CONFLICT
+  - NOT_FOUND
+  - UNSAFE_PATH
+  - INVALID_BRANCH_NAME
+  - PERMISSION_DENIED
+  - REPOSITORY_ARCHIVED
+  - TIMEOUT
+  - UNKNOWN_MUTATION_RESULT
+  - PROVIDER_ERROR
+- id: FJ-REPO-005
+  name: repository_file_update
+  module: repository
+  purpose: Изменить существующий файл с optimistic concurrency по file SHA.
+  exposure: provider_interface
+  mutation: true
+  upstream:
+    method: PUT
+    path: /repos/{owner}/{repo}/contents/{filepath}
+    operation_id: repoUpdateFile
+    response_type: json
+  inputs:
+    path:
+      type: repository_path
+      required: true
+    content:
+      type: utf8_string
+      required: true
+    branch:
+      type: branch_name
+      required: true
+    expected_file_sha:
+      type: git_sha
+      required: true
+    commit_message:
+      type: string
+      required: true
+      min_length: 1
+    signoff:
+      type: boolean
+      required: false
+      default: false
+  output:
+    path: string
+    file_sha: string|null
+    commit_sha: string
+  rules:
+  - Adapter передаёт expected_file_sha в Forgejo поле sha.
+  - Перед mutation разрешается дополнительное read-before-write сравнение SHA.
+  - При несовпадении revision вернуть CONFLICT; last-write-wins запрещён.
+  - Adapter кодирует content в base64.
+  - from_path и new_branch этой функцией не используются.
+  - Mutation не повторяется вслепую после network timeout.
+  errors:
+  - CONFLICT
+  - NOT_FOUND
+  - UNSAFE_PATH
+  - INVALID_BRANCH_NAME
+  - PERMISSION_DENIED
+  - REPOSITORY_ARCHIVED
+  - TIMEOUT
+  - UNKNOWN_MUTATION_RESULT
+  - PROVIDER_ERROR
+- id: FJ-REPO-006
+  name: repository_file_delete
+  module: repository
+  purpose: Удалить существующий файл с optimistic concurrency по file SHA.
+  exposure: provider_interface
+  mutation: true
+  upstream:
+    method: DELETE
+    path: /repos/{owner}/{repo}/contents/{filepath}
+    operation_id: repoDeleteFile
+    response_type: json
+  inputs:
+    path:
+      type: repository_path
+      required: true
+    branch:
+      type: branch_name
+      required: true
+    expected_file_sha:
+      type: git_sha
+      required: true
+    commit_message:
+      type: string
+      required: true
+      min_length: 1
+    signoff:
+      type: boolean
+      required: false
+      default: false
+  output:
+    path: string
+    commit_sha: string
+    deleted: 'constant: true'
+  rules:
+  - Adapter передаёт expected_file_sha в Forgejo поле sha.
+  - При несовпадении revision вернуть CONFLICT.
+  - Mutation не повторяется вслепую после network timeout.
+  errors:
+  - CONFLICT
+  - NOT_FOUND
+  - UNSAFE_PATH
+  - INVALID_BRANCH_NAME
+  - PERMISSION_DENIED
+  - REPOSITORY_ARCHIVED
+  - TIMEOUT
+  - UNKNOWN_MUTATION_RESULT
+  - PROVIDER_ERROR
+- id: FJ-REPO-007
+  name: repository_commit
+  module: repository
+  purpose: Атомарно применить несколько create/update/delete/move действий одним Forgejo commit.
+  exposure: provider_interface
+  mutation: true
+  upstream:
+    method: POST
+    path: /repos/{owner}/{repo}/contents
+    operation_id: repoChangeFiles
+    response_type: json
+  inputs:
+    branch:
+      type: branch_name
+      required: true
+    commit_message:
+      type: string
+      required: true
+      min_length: 1
+    actions:
+      type: array<file_action>
+      required: true
+      min_items: 1
+    signoff:
+      type: boolean
+      required: false
+      default: false
+  output:
+    commit_sha: string
+    changed_paths: array<string>
+  rules:
+  - Весь batch валидируется до HTTP-вызова.
+  - 'Допустимые action.operation: create, update, delete, move.'
+  - create требует path+content и запрещает expected_file_sha.
+  - update требует path+content+expected_file_sha.
+  - delete требует path+expected_file_sha.
+  - move нормализуется в Forgejo update operation с path=target_path, from_path=source_path и обязательным expected_file_sha;
+    content передаётся только если этого требует target-instance schema.
+  - Для create/update content кодируется adapter в base64.
+  - При любом локально невалидном действии HTTP-вызов запрещён.
+  - Если provider отклонил хотя бы одно действие, считать batch неуспешным.
+  - Нельзя заменять один atomic endpoint последовательностью отдельных commits.
+  - При отсутствии repoChangeFiles на target instance вернуть PROVIDER_CAPABILITY_GAP.
+  - Mutation не повторяется вслепую после network timeout.
+  errors:
+  - VALIDATION_ERROR
+  - CONFLICT
+  - NOT_FOUND
+  - UNSAFE_PATH
+  - INVALID_BRANCH_NAME
+  - PROVIDER_CAPABILITY_GAP
+  - PERMISSION_DENIED
+  - REPOSITORY_ARCHIVED
+  - TIMEOUT
+  - UNKNOWN_MUTATION_RESULT
+  - PROVIDER_ERROR
+- id: FJ-BR-001
+  name: branch_list
+  module: branches
+  purpose: Получить список веток репозитория.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/branches
+    operation_id: repoListBranches
+    response_type: json
+  inputs:
+    page:
+      type: integer
+      required: false
+      minimum: 1
+    limit:
+      type: integer
+      required: false
+      minimum: 1
+  output:
+    items: array<branch>
+    page: page_meta
+  rules: []
+  errors:
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+  pagination:
+    supported: true
+    strategy: page_limit
+    page_is_one_based: true
+    adapter_must_follow_all_pages_when_full_collection_requested: true
+- id: FJ-BR-002
+  name: branch_get
+  module: branches
+  purpose: Получить ветку и её effective protection metadata.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/branches/{branch}
+    operation_id: repoGetBranch
+    response_type: json
+  inputs:
+    branch:
+      type: branch_name
+      required: true
+  output:
+    name: string
+    commit_sha: string
+    protected: boolean|null
+    protection: object|null
+  rules:
+  - Имя ветки URL-encode; чтение допускает существующие Forgejo branch names шире профиля создания MCP.
+  errors:
+  - NOT_FOUND
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-BR-003
+  name: branch_create
+  module: branches
+  purpose: Создать рабочую ветку от branch/tag/commit ref.
+  exposure: provider_interface
+  mutation: true
+  upstream:
+    method: POST
+    path: /repos/{owner}/{repo}/branches
+    operation_id: repoCreateBranch
+    response_type: json
+  inputs:
+    name:
+      type: branch_name
+      required: true
+    base_ref:
+      type: string
+      required: true
+  output:
+    name: string
+    commit_sha: string
+  rules:
+  - До HTTP-вызова обязательно validate_branch_name по профилю MCP.
+  - 'Forgejo request: new_branch_name=name, old_ref_name=base_ref.'
+  - Deprecated old_branch_name не использовать.
+  - Если ветка уже существует, вернуть CONFLICT.
+  - base_ref должен существовать.
+  - Mutation не повторяется вслепую.
+  errors:
+  - INVALID_BRANCH_NAME
+  - CONFLICT
+  - NOT_FOUND
+  - PERMISSION_DENIED
+  - REPOSITORY_ARCHIVED
+  - TIMEOUT
+  - UNKNOWN_MUTATION_RESULT
+  - PROVIDER_ERROR
+- id: FJ-BR-004
+  name: branch_delete
+  module: branches
+  purpose: Удалить рабочую ветку с защитой default/protected branch.
+  exposure: provider_interface
+  mutation: true
+  upstream:
+    method: DELETE
+    path: /repos/{owner}/{repo}/branches/{branch}
+    operation_id: repoDeleteBranch
+    response_type: json
+  inputs:
+    branch:
+      type: branch_name
+      required: true
+  output:
+    deleted: 'constant: true'
+    branch: string
+  rules:
+  - Перед DELETE получить repository_get и branch_get.
+  - Если branch == repository.default_branch, вернуть PROTECTED_BRANCH.
+  - Если effective protection запрещает удаление, вернуть PROTECTED_BRANCH.
+  - Не пытаться обходить server-side protection.
+  - Mutation не повторяется вслепую.
+  errors:
+  - NOT_FOUND
+  - PROTECTED_BRANCH
+  - PERMISSION_DENIED
+  - REPOSITORY_ARCHIVED
+  - TIMEOUT
+  - UNKNOWN_MUTATION_RESULT
+  - PROVIDER_ERROR
+- id: FJ-BR-005
+  name: branch_protection_get
+  module: branches
+  purpose: Получить явное правило branch protection.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/branch_protections/{name}
+    operation_id: repoGetBranchProtection
+    response_type: json
+  inputs:
+    name:
+      type: string
+      required: true
+  output:
+    protection: branch_protection
+  rules:
+  - Только read-only. Создание/редактирование/удаление protections не входит в provider contract v1.
+  errors:
+  - NOT_FOUND
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-COMMIT-001
+  name: commit_list
+  module: commits
+  purpose: Получить историю commits.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/commits
+    operation_id: repoGetAllCommits
+    response_type: json
+  inputs:
+    ref:
+      type: string
+      required: false
+      description: branch/tag/SHA
+    path:
+      type: repository_path
+      required: false
+    page:
+      type: integer
+      required: false
+      minimum: 1
+    limit:
+      type: integer
+      required: false
+      minimum: 1
+  output:
+    items: array<commit>
+    page: page_meta
+  rules:
+  - Если path передан, выполнить validate_repository_path.
+  - Adapter маппит ref на upstream query sha/ref согласно target Swagger.
+  errors:
+  - NOT_FOUND
+  - UNSAFE_PATH
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+  pagination:
+    supported: true
+    strategy: page_limit
+    page_is_one_based: true
+    adapter_must_follow_all_pages_when_full_collection_requested: true
+- id: FJ-COMMIT-002
+  name: commit_get
+  module: commits
+  purpose: Получить один commit по SHA или ref.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/git/commits/{sha}
+    operation_id: repoGetSingleCommit
+    response_type: json
+  inputs:
+    ref:
+      type: string
+      required: true
+  output:
+    sha: string
+    message: string|null
+    author: identity|null
+    committer: identity|null
+    parents: array<git_ref>
+    verification: object|null
+  rules: []
+  errors:
+  - NOT_FOUND
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-COMMIT-003
+  name: commit_diff
+  module: commits
+  purpose: Получить unified diff одного commit.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/git/commits/{sha}.diff
+    operation_id: repoDownloadCommitDiffOrPatch
+    response_type: text
+  inputs:
+    sha:
+      type: git_sha
+      required: true
+  output:
+    sha: string
+    diff: string
+  rules:
+  - Для provider contract v1 разрешён только diffType=diff; patch наружу не экспонируется.
+  errors:
+  - NOT_FOUND
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-COMMIT-004
+  name: compare_refs
+  module: commits
+  purpose: Сравнить два refs и вернуть commits+changed files/diff metadata.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/compare/{basehead}
+    operation_id: repoCompareDiff
+    response_type: json
+  inputs:
+    base:
+      type: string
+      required: true
+    head:
+      type: string
+      required: true
+  output:
+    base: string
+    head: string
+    ahead_by: integer|null
+    behind_by: integer|null
+    commits: array<commit>
+    files: array<changed_file>
+    diff: string|null
+  rules:
+  - Синтаксис Forgejo basehead является деталью adapter.
+  - 'Core передаёт два отдельных refs: base и head.'
+  - Adapter обязан корректно URL-encode составной upstream basehead.
+  errors:
+  - NOT_FOUND
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-COMMIT-005
+  name: commit_status_get
+  module: commits
+  purpose: Получить агрегированный status checks для ref/commit.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/commits/{ref}/status
+    operation_id: repoGetCombinedStatusByRef
+    response_type: json
+  inputs:
+    ref:
+      type: string
+      required: true
+  output:
+    state: string|null
+    sha: string|null
+    statuses: array<commit_status>
+  rules:
+  - Нормализовать upstream states без самостоятельной оценки успешности сверх значения provider.
+  errors:
+  - NOT_FOUND
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-PR-001
+  name: pull_request_list
+  module: pull_requests
+  purpose: Получить список Pull Requests и найти существующий PR для branch pair.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/pulls
+    operation_id: repoListPullRequests
+    response_type: json
+  inputs:
+    state:
+      type: enum:open|closed|all
+      required: false
+      default: open
+    base:
+      type: string
+      required: false
+    head:
+      type: string
+      required: false
+    page:
+      type: integer
+      required: false
+      minimum: 1
+    limit:
+      type: integer
+      required: false
+      minimum: 1
+  output:
+    items: array<pull_request>
+    page: page_meta
+  rules: []
+  errors:
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+  pagination:
+    supported: true
+    strategy: page_limit
+    page_is_one_based: true
+    adapter_must_follow_all_pages_when_full_collection_requested: true
+- id: FJ-PR-002
+  name: pull_request_create
+  module: pull_requests
+  purpose: Создать Pull Request из рабочей ветки в target branch.
+  exposure: provider_interface
+  mutation: true
+  upstream:
+    method: POST
+    path: /repos/{owner}/{repo}/pulls
+    operation_id: repoCreatePullRequest
+    response_type: json
+  inputs:
+    head:
+      type: branch_name
+      required: true
+    base:
+      type: branch_name
+      required: true
+    title:
+      type: string
+      required: true
+      min_length: 1
+    body:
+      type: string
+      required: false
+      default: ''
+  output:
+    index: integer
+    number: integer|null
+    state: string
+    title: string
+    head_ref: string
+    head_sha: string|null
+    base_ref: string
+    html_url: string|null
+  rules:
+  - Перед созданием сравнить refs и не создавать PR без изменений.
+  - При уже существующем открытом PR для той же пары head/base вернуть CONFLICT с existing_pr metadata.
+  - assignee/labels/milestone не входят в contract v1.
+  - Mutation не повторяется вслепую.
+  errors:
+  - CONFLICT
+  - NOT_FOUND
+  - VALIDATION_ERROR
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - UNKNOWN_MUTATION_RESULT
+  - PROVIDER_ERROR
+- id: FJ-PR-003
+  name: pull_request_get
+  module: pull_requests
+  purpose: Получить текущее состояние Pull Request.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/pulls/{index}
+    operation_id: repoGetPullRequest
+    response_type: json
+  inputs:
+    index:
+      type: integer
+      required: true
+      minimum: 1
+  output:
+    index: integer
+    number: integer|null
+    state: string
+    title: string|null
+    body: string|null
+    draft: boolean|null
+    merged: boolean|null
+    mergeable: boolean|null
+    head_ref: string
+    head_sha: string
+    base_ref: string
+    base_sha: string|null
+    html_url: string|null
+  rules: []
+  errors:
+  - NOT_FOUND
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-PR-004
+  name: pull_request_files
+  module: pull_requests
+  purpose: Получить изменённые файлы Pull Request.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/pulls/{index}/files
+    operation_id: repoGetPullRequestFiles
+    response_type: json
+  inputs:
+    index:
+      type: integer
+      required: true
+      minimum: 1
+    page:
+      type: integer
+      required: false
+      minimum: 1
+    limit:
+      type: integer
+      required: false
+      minimum: 1
+  output:
+    items: array<changed_file>
+    page: page_meta
+  rules: []
+  errors:
+  - NOT_FOUND
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+  pagination:
+    supported: true
+    strategy: page_limit
+    page_is_one_based: true
+    adapter_must_follow_all_pages_when_full_collection_requested: true
+- id: FJ-PR-005
+  name: pull_request_diff
+  module: pull_requests
+  purpose: Получить unified diff Pull Request.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/pulls/{index}.diff
+    operation_id: repoDownloadPullDiffOrPatch
+    response_type: text
+  inputs:
+    index:
+      type: integer
+      required: true
+      minimum: 1
+  output:
+    index: integer
+    diff: string
+  rules:
+  - Для provider contract v1 используется diffType=diff.
+  errors:
+  - NOT_FOUND
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-PR-006
+  name: pull_request_is_merged
+  module: pull_requests
+  purpose: Проверить факт merge Pull Request.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/pulls/{index}/merge
+    operation_id: repoPullRequestIsMerged
+    response_type: json
+  inputs:
+    index:
+      type: integer
+      required: true
+      minimum: 1
+  output:
+    merged: boolean
+  rules:
+  - Forgejo обычно выражает merged через HTTP success/no-content и not-merged через 404; adapter обязан нормализовать это
+    в boolean.
+  - 404 этого конкретного endpoint не должен автоматически означать, что сам PR отсутствует; при необходимости подтвердить
+    pull_request_get.
+  errors:
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-PR-007
+  name: pull_request_merge
+  module: pull_requests
+  purpose: Выполнить merge Pull Request только после явного разрешения пользователя и проверки ожидаемого head SHA.
+  exposure: provider_interface
+  mutation: true
+  upstream:
+    method: POST
+    path: /repos/{owner}/{repo}/pulls/{index}/merge
+    operation_id: repoMergePullRequest
+    response_type: json
+  inputs:
+    index:
+      type: integer
+      required: true
+      minimum: 1
+    expected_head_sha:
+      type: git_sha
+      required: true
+    strategy:
+      type: enum:merge|rebase|rebase-merge|squash|fast-forward-only
+      required: false
+      default: merge
+    delete_branch_after_merge:
+      type: boolean
+      required: false
+      default: false
+    merge_title:
+      type: string
+      required: false
+    merge_message:
+      type: string
+      required: false
+    explicit_user_authorization:
+      type: boolean
+      required: true
+      const: true
+  output:
+    merged: 'constant: true'
+    index: integer
+    merge_commit_sha: string|null
+  rules:
+  - Функция запрещена без explicit_user_authorization=true, который должен быть получен из явного текущего запроса пользователя,
+    а не выведен агентом.
+  - Перед merge обязательно pull_request_get.
+  - PR должен быть открыт.
+  - Текущий head_sha должен точно совпадать с expected_head_sha; иначе CONFLICT.
+  - Core обязан до вызова provider повторно выполнить DSL/repository validation.
+  - force_merge всегда false и не может быть аргументом публичного contract.
+  - merge_when_checks_succeed по умолчанию false и не используется для скрытого отложенного merge.
+  - Branch protection и required status checks не обходить.
+  - Mutation не повторяется вслепую.
+  errors:
+  - USER_AUTHORIZATION_REQUIRED
+  - CONFLICT
+  - NOT_FOUND
+  - PROTECTED_BRANCH
+  - CHECKS_NOT_PASSED
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - UNKNOWN_MUTATION_RESULT
+  - PROVIDER_ERROR
+- id: FJ-ACT-001
+  name: actions_run_list
+  module: actions
+  purpose: Получить список Forgejo Actions workflow runs.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/actions/runs
+    operation_id: ListActionRuns
+    response_type: json
+  inputs:
+    page:
+      type: integer
+      required: false
+      minimum: 1
+    limit:
+      type: integer
+      required: false
+      minimum: 1
+    status:
+      type: string
+      required: false
+    branch:
+      type: string
+      required: false
+  output:
+    items: array<action_run>
+    page: page_meta
+  rules:
+  - Фильтры передавать только если target-instance Swagger подтверждает их наличие.
+  - Если конкретный filter не поддержан target instance, вернуть PROVIDER_CAPABILITY_GAP для этого filter, а не молча игнорировать.
+  errors:
+  - PROVIDER_CAPABILITY_GAP
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+  pagination:
+    supported: true
+    strategy: page_limit
+    page_is_one_based: true
+    adapter_must_follow_all_pages_when_full_collection_requested: true
+- id: FJ-ACT-002
+  name: actions_run_get
+  module: actions
+  purpose: Получить один workflow run.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/actions/runs/{run_id}
+    operation_id: ActionRun
+    response_type: json
+  inputs:
+    run_id:
+      type: integer
+      required: true
+      minimum: 1
+  output:
+    id: integer
+    run_number: integer|null
+    status: string|null
+    event: string|null
+    head_branch: string|null
+    head_sha: string|null
+    url: string|null
+    created_at: datetime|null
+    updated_at: datetime|null
+  rules: []
+  errors:
+  - NOT_FOUND
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-ACT-003
+  name: actions_run_jobs
+  module: actions
+  purpose: Получить jobs одного workflow run.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/actions/runs/{run_id}/jobs
+    operation_id: ListActionRunJobs
+    response_type: json
+  inputs:
+    run_id:
+      type: integer
+      required: true
+      minimum: 1
+  output:
+    items: array<action_job>
+  rules:
+  - Endpoint относится к Forgejo 16.x surface; обязательна compatibility verification по Swagger целевого инстанса.
+  - Если endpoint отсутствует, вернуть PROVIDER_CAPABILITY_GAP.
+  errors:
+  - NOT_FOUND
+  - PROVIDER_CAPABILITY_GAP
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-ACT-004
+  name: actions_run_logs
+  module: actions
+  purpose: Скачать и нормализовать логи всех jobs workflow run.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/actions/runs/{run_id}/logs
+    operation_id: repoGetActionRunLogs
+    response_type: binary_zip
+  inputs:
+    run_id:
+      type: integer
+      required: true
+      minimum: 1
+  output:
+    run_id: integer
+    files:
+    - name: string
+      content: utf8_string
+    archive_format: 'constant: zip'
+  rules:
+  - Endpoint добавлен в Forgejo 16; проверять target-instance Swagger.
+  - Adapter распаковывает ZIP и возвращает UTF-8 plaintext logs.
+  - Секреты, уже замаскированные Forgejo, не должны размаскировываться.
+  - Ввести configurable max_log_bytes; превышение даёт RESPONSE_TOO_LARGE.
+  - Если отдельный log не UTF-8, вернуть его как content_base64 только во внутренней provider model; MCP-facing слой не должен
+    печатать бинарный мусор.
+  errors:
+  - NOT_FOUND
+  - PROVIDER_CAPABILITY_GAP
+  - RESPONSE_TOO_LARGE
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-ACT-005
+  name: actions_job_logs
+  module: actions
+  purpose: Получить plaintext logs одной job, при необходимости конкретной попытки.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/actions/jobs/{job_id}/logs
+    operation_id: repoGetActionJobLogs
+    response_type: text
+  inputs:
+    job_id:
+      type: integer
+      required: true
+      minimum: 1
+    attempt:
+      type: integer
+      required: false
+      minimum: 1
+  output:
+    job_id: integer
+    attempt: integer|null
+    content: utf8_string
+  rules:
+  - Endpoint относится к Forgejo 16.x surface; проверять target-instance Swagger.
+  - attempt передаётся только если поддержан Swagger целевого инстанса.
+  errors:
+  - NOT_FOUND
+  - PROVIDER_CAPABILITY_GAP
+  - RESPONSE_TOO_LARGE
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-ACT-006
+  name: actions_run_artifacts
+  module: actions
+  purpose: Получить metadata artifacts одного workflow run.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/actions/runs/{run_id}/artifacts
+    operation_id: ListActionRunArtifacts
+    response_type: json
+  inputs:
+    run_id:
+      type: integer
+      required: true
+      minimum: 1
+    page:
+      type: integer
+      required: false
+      minimum: 1
+    limit:
+      type: integer
+      required: false
+      minimum: 1
+  output:
+    items: array<action_artifact>
+    page: page_meta
+  rules:
+  - Endpoint относится к Forgejo 16.x API surface; проверять target-instance Swagger.
+  errors:
+  - NOT_FOUND
+  - PROVIDER_CAPABILITY_GAP
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+  pagination:
+    supported: true
+    strategy: page_limit
+    page_is_one_based: true
+    adapter_must_follow_all_pages_when_full_collection_requested: true
+- id: FJ-ACT-007
+  name: actions_artifact_get
+  module: actions
+  purpose: Получить metadata одного Actions artifact.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/actions/artifacts/{artifact_id}
+    operation_id: GetActionArtifact
+    response_type: json
+  inputs:
+    artifact_id:
+      type: integer
+      required: true
+      minimum: 1
+  output:
+    id: integer
+    name: string
+    size_in_bytes: integer|null
+    expired: boolean|null
+    created_at: datetime|null
+    expires_at: datetime|null
+    download_url: string|null
+  rules:
+  - Endpoint относится к Forgejo 16.x API surface; проверять target-instance Swagger.
+  errors:
+  - NOT_FOUND
+  - PROVIDER_CAPABILITY_GAP
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-ACT-008
+  name: actions_artifact_download
+  module: actions
+  purpose: Скачать ZIP artifact с ограничением размера.
+  exposure: provider_interface
+  mutation: false
+  upstream:
+    method: GET
+    path: /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip
+    operation_id: DownloadActionArtifact
+    response_type: binary_zip
+  inputs:
+    artifact_id:
+      type: integer
+      required: true
+      minimum: 1
+    max_bytes:
+      type: integer
+      required: false
+      minimum: 1
+      description: override <= configured hard limit
+  output:
+    artifact_id: integer
+    media_type: application/zip
+    content_base64: string
+    size_in_bytes: integer
+  rules:
+  - Endpoint относится к Forgejo 16.x API surface; проверять target-instance Swagger.
+  - Перед download желательно actions_artifact_get и проверка declared size.
+  - Действует hard maximum artifact bytes из конфигурации; runtime аргумент не может его увеличить.
+  - Binary наружу кодируется base64 только на границе MCP, не в provider internals.
+  errors:
+  - NOT_FOUND
+  - PROVIDER_CAPABILITY_GAP
+  - RESPONSE_TOO_LARGE
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - PROVIDER_ERROR
+- id: FJ-ACT-009
+  name: actions_run_cancel
+  module: actions
+  purpose: Отменить pending/running workflow run.
+  exposure: provider_interface
+  mutation: true
+  upstream:
+    method: POST
+    path: /repos/{owner}/{repo}/actions/runs/{run_id}/cancel
+    operation_id: CancelActionRun
+    response_type: json
+  inputs:
+    run_id:
+      type: integer
+      required: true
+      minimum: 1
+  output:
+    run_id: integer
+    cancel_requested: 'constant: true'
+  rules:
+  - Перед mutation получить actions_run_get.
+  - Допустимо только для состояний, которые Forgejo может отменить.
+  - Mutation не повторяется вслепую.
+  errors:
+  - NOT_FOUND
+  - CONFLICT
+  - PROVIDER_CAPABILITY_GAP
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - UNKNOWN_MUTATION_RESULT
+  - PROVIDER_ERROR
+- id: FJ-ACT-010
+  name: actions_workflow_dispatch
+  module: actions
+  purpose: Вручную запустить workflow_dispatch workflow.
+  exposure: provider_interface
+  mutation: true
+  upstream:
+    method: POST
+    path: /repos/{owner}/{repo}/actions/workflows/{workflowfilename}/dispatches
+    operation_id: DispatchWorkflow
+    response_type: json
+  inputs:
+    workflow_file:
+      type: repository_path
+      required: true
+      description: имя/путь workflow согласно Swagger целевого Forgejo
+    ref:
+      type: string
+      required: true
+    inputs:
+      type: object<string, scalar>
+      required: false
+      default: {}
+  output:
+    accepted: boolean
+    run: action_run|null
+  rules:
+  - workflow_file должен указывать на workflow в .forgejo/workflows и проходить path safety validation.
+  - ref обязателен.
+  - Если target supports return_run_info, adapter может запросить run metadata; отсутствие этой возможности не меняет success
+    semantics.
+  - Mutation не повторяется вслепую.
+  errors:
+  - NOT_FOUND
+  - VALIDATION_ERROR
+  - PROVIDER_CAPABILITY_GAP
+  - PERMISSION_DENIED
+  - TIMEOUT
+  - UNKNOWN_MUTATION_RESULT
+  - PROVIDER_ERROR
+contract_test_requirements:
+  must_verify:
+  - every function id is unique
+  - every function name is unique within provider
+  - all upstream method/path mappings exist in target instance Swagger or are reported as capability gaps
+  - all required parameters are enforced
+  - unknown public parameters are rejected
+  - secrets never appear in logs/errors/responses
+  - pagination is followed when a complete collection is requested
+  - file content base64 conversion stays inside adapter
+  - update/delete/move reject stale SHA
+  - batch mutation stays single-commit
+  - default/protected branch cannot be deleted
+  - PR merge rejects stale head SHA
+  - PR merge rejects missing explicit user authorization
+  - mutation is not blindly retried after timeout
+  - Forgejo 16 Actions endpoints are capability-checked against target Swagger
+  integration_matrix:
+  - minimum supported Forgejo 16.x patch chosen by project
+  - latest available Forgejo 16.x patch
+  recommended_fixture_flow:
+  - provider_version
+  - repository_get
+  - branch_create
+  - repository_file_create
+  - repository_file_update with correct SHA
+  - repository_file_update with stale SHA -> CONFLICT
+  - repository_commit multi-file atomic change
+  - compare_refs
+  - pull_request_create
+  - pull_request_get
+  - pull_request_files
+  - actions_run_list
+  - pull_request_merge only with explicit authorization
+  - branch_delete after merge if allowed
+upstream_references:
+- name: Forgejo v16 release notes
+  url: https://forgejo.org/2026-07-release-v16-0/
+  reason: 'Forgejo 16 Actions API additions: logs, artifacts, cancellation and Authorized Integrations.'
+- name: Forgejo v16 configuration cheat sheet
+  url: https://forgejo.org/docs/v16.0/admin/config-cheat-sheet/
+  reason: Swagger UI setting and repository/Actions configuration.
+- name: Forgejo Actions basic concepts
+  url: https://forgejo.org/docs/v16.0/user/actions/basic-concepts/
+  reason: Automatic token behavior and workflow security characteristics.
+- name: Target instance Swagger
+  url_template: '{forgejo_url}/api/swagger'
+  reason: Authoritative transport compatibility check for the installed Forgejo build.
