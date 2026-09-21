@@ -129,6 +129,80 @@ ARCH_REPO_MCP_GOVERNMENT_REPOSITORY=government
 него, а выход за его границы отклоняется. Entity tools дополнительно запрещают использовать
 government repository как рабочий.
 
+## Запуск в Goose на macOS
+
+Goose подключает локальные MCP-серверы как STDIO extensions. Сначала установите нужный клиент
+Goose через Homebrew (CLI, Desktop или оба):
+
+```bash
+brew install block-goose-cli
+brew install --cask block-goose
+```
+
+Настройте LLM provider при первом запуске Goose или позднее через `goose configure` в CLI либо
+`Settings` → `Models` в Desktop. Затем подготовьте ArchRepoMCP и локальный workspace. Во всех
+следующих примерах замените `/Users/you/...` своими абсолютными путями:
+
+```bash
+cd /Users/you/src/ArchRepoMCP
+python3 -m venv .venv
+./.venv/bin/python -m pip install -e .
+mkdir -p /Users/you/ArchitectureRepositories
+```
+
+Используйте абсолютный путь к `.venv/bin/arch-repo-mcp`: Goose Desktop может не наследовать
+`PATH` интерактивной shell. Переменные окружения также лучше передать в настройках extension,
+поскольку рабочая директория процесса Goose не обязана совпадать с каталогом проекта.
+
+### Goose CLI
+
+Для постоянного подключения выполните:
+
+```bash
+goose configure
+```
+
+В интерактивном меню выберите `Add Extension` → `Command-Line Extension` и укажите:
+
+- name: `ArchRepoMCP`;
+- command: `/Users/you/src/ArchRepoMCP/.venv/bin/arch-repo-mcp`;
+- timeout: `300`;
+- environment variable `ARCH_REPO_MCP_WORKSPACE`:
+  `/Users/you/ArchitectureRepositories`;
+- environment variable `ARCH_REPO_MCP_GOVERNMENT_REPOSITORY`: `government`.
+
+После добавления запустите обычную сессию:
+
+```bash
+goose session
+```
+
+Для одноразовой сессии без сохранения extension в конфигурации Goose используйте:
+
+```bash
+goose session --with-extension \
+  "ARCH_REPO_MCP_WORKSPACE=/Users/you/ArchitectureRepositories ARCH_REPO_MCP_GOVERNMENT_REPOSITORY=government /Users/you/src/ArchRepoMCP/.venv/bin/arch-repo-mcp"
+```
+
+### Goose Desktop (GUI)
+
+1. Откройте боковую панель Goose Desktop и перейдите в `Extensions`.
+2. Нажмите `Add custom extension`.
+3. Выберите type `Standard IO`, задайте ID `arch-repo-mcp`, name `ArchRepoMCP` и command
+   `/Users/you/src/ArchRepoMCP/.venv/bin/arch-repo-mcp`.
+4. Добавьте через отдельную кнопку `Add` обе переменные окружения из CLI-инструкции выше и
+   установите timeout `300`.
+5. Нажмите `Add`, убедитесь, что extension включён, и начните новую сессию.
+
+Для проверки подключения попросите Goose: `Вызови repository_describe, затем repository_list`.
+Первый вызов автоматически создаст government repository со встроенными DSL-декларацией и
+шаблонами, если его ещё нет. Конфигурация CLI и Desktop общая и хранится Goose в
+`~/.config/goose/config.yaml`.
+
+Актуальные названия пунктов интерфейса и варианты установки приведены в официальной
+[инструкции по установке Goose](https://goose-docs.ai/docs/getting-started/installation/) и
+[документации по extensions](https://goose-docs.ai/docs/getting-started/using-extensions/).
+
 ## MCP tools
 
 | Tool | Назначение |
