@@ -38,6 +38,7 @@ from arch_repo_mcp.remote_sync import (
     clone_repository,
     fetch_repository,
     publish_repository,
+    pull_repository,
 )
 from arch_repo_mcp.repository import (
     RepositoryContext,
@@ -53,9 +54,9 @@ mcp = MCPServer(
     description="Local-first management of DSL-defined architecture Git repositories",
     instructions=(
         "Use repository_open before entity operations. Network access occurs only through the "
-        "explicit repository_clone, repository_fetch, and repository_publish tools; no tool "
-        "performs an implicit pull, push, or provider API request. Paths must identify local "
-        "Git repositories and repository-relative files."
+        "explicit repository_clone, repository_fetch, repository_pull, and "
+        "repository_publish tools; no tool performs an implicit pull, push, or provider API "
+        "request. Paths must identify local Git repositories and repository-relative files."
     ),
     version=__version__,
 )
@@ -304,6 +305,25 @@ def repository_fetch(
             remote,
             include_tags=include_tags,
             prune=prune,
+        ).as_dict()
+    )
+
+
+@mcp.tool()
+def repository_pull(
+    repository_path: str,
+    remote: str,
+    remote_branch: str,
+    declaration_path: str = "architecture.yaml",
+) -> dict[str, Any]:
+    """Fetch and integrate only a validated fast-forward into a clean local branch."""
+
+    return _call(
+        lambda: pull_repository(
+            repository_path,
+            remote,
+            remote_branch,
+            declaration_path,
         ).as_dict()
     )
 

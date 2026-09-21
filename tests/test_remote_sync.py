@@ -5,10 +5,16 @@ from pathlib import Path
 
 import pytest
 
+import arch_repo_mcp.remote_sync as remote_sync_module
 from arch_repo_mcp.entities import update_entity
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
 from arch_repo_mcp.local_git import configure_remote, repository_commit, repository_status
-from arch_repo_mcp.remote_sync import clone_repository, fetch_repository, publish_repository
+from arch_repo_mcp.remote_sync import (
+    clone_repository,
+    fetch_repository,
+    publish_repository,
+    pull_repository,
+)
 from arch_repo_mcp.repository import create_repository, validate_repository
 
 DECLARATION = """\
@@ -157,6 +163,88 @@ def test_fetch_preserves_dirty_worktree(tmp_path: Path) -> None:
     assert repository_status(consumer).entries
 
 
+def test_pull_fast_forwards_only_after_fetched_tree_validation(tmp_path: Path) -> None:
+    source, remote = _make_source_and_remote(tmp_path)
+    consumer = _clone_consumer(remote, tmp_path)
+    previous_head = repository_status(consumer).head
+    update_entity(source, "fact", "facts/F-0001.md", REMOTE_CONTENT)
+    remote_head = repository_commit(source, "Remote fast-forward change").commit
+    publish_repository(source, "origin", "main")
+
+    result = pull_repository(consumer, "origin", "main")
+
+    assert result.previous_head == previous_head
+    assert result.current_head == remote_head
+    assert result.outcome == "fast_forward"
+    assert repository_status(consumer).head == remote_head
+    assert (consumer / "facts" / "F-0001.md").read_text(encoding="utf-8") == REMOTE_CONTENT
+
+
+def test_pull_rejects_dirty_worktree_before_fetch(tmp_path: Path) -> None:
+    _, remote = _make_source_and_remote(tmp_path)
+    consumer = _clone_consumer(remote, tmp_path)
+    update_entity(consumer, "fact", "facts/F-0001.md", LOCAL_CONTENT)
+    fetch_head_before = _git(
+        consumer,
+        "rev-parse",
+        "--verify",
+        "FETCH_HEAD",
+        check=False,
+    ).stdout.strip()
+
+    with pytest.raises(ArchRepoError) as captured:
+        pull_repository(consumer, "origin", "main")
+
+    fetch_head_after = _git(
+        consumer,
+        "rev-parse",
+        "--verify",
+        "FETCH_HEAD",
+        check=False,
+    ).stdout.strip()
+    assert captured.value.code is ErrorCode.DIRTY_WORKTREE
+    assert fetch_head_after == fetch_head_before
+    assert (consumer / "facts" / "F-0001.md").read_text(encoding="utf-8") == LOCAL_CONTENT
+
+
+def test_pull_rejects_divergence_without_conflict_resolution(tmp_path: Path) -> None:
+    source, remote = _make_source_and_remote(tmp_path)
+    consumer = _clone_consumer(remote, tmp_path)
+
+    update_entity(source, "fact", "facts/F-0001.md", REMOTE_CONTENT)
+    repository_commit(source, "Remote conflicting change")
+    publish_repository(source, "origin", "main")
+    update_entity(consumer, "fact", "facts/F-0001.md", LOCAL_CONTENT)
+    local_head = repository_commit(consumer, "Local conflicting change").commit
+
+    with pytest.raises(ArchRepoError) as captured:
+        pull_repository(consumer, "origin", "main")
+
+    assert captured.value.code is ErrorCode.CONFLICT
+    assert repository_status(consumer).head == local_head
+    assert repository_status(consumer).entries == ()
+    assert _git(consumer, "diff", "--name-only", "--diff-filter=U").stdout == ""
+    assert (consumer / "facts" / "F-0001.md").read_text(encoding="utf-8") == LOCAL_CONTENT
+
+
+def test_pull_rejects_invalid_fetched_tree_before_integration(tmp_path: Path) -> None:
+    source, remote = _make_source_and_remote(tmp_path)
+    consumer = _clone_consumer(remote, tmp_path)
+    local_head = repository_status(consumer).head
+    (source / "facts" / "F-0001.md").write_text("invalid front matter", encoding="utf-8")
+    _git(source, "add", "facts/F-0001.md")
+    _git(source, "commit", "--quiet", "-m", "Invalid remote architecture")
+    _git(source, "push", "--quiet", "origin", "main")
+
+    with pytest.raises(ArchRepoError) as captured:
+        pull_repository(consumer, "origin", "main")
+
+    assert captured.value.code is ErrorCode.INVALID_REPOSITORY
+    assert repository_status(consumer).head == local_head
+    assert repository_status(consumer).entries == ()
+    assert (consumer / "facts" / "F-0001.md").read_text(encoding="utf-8") == INITIAL_CONTENT
+
+
 def test_publish_pushes_current_commit_without_setting_upstream(tmp_path: Path) -> None:
     _, remote = _make_source_and_remote(tmp_path)
     consumer = _clone_consumer(remote, tmp_path)
@@ -231,3 +319,111 @@ def test_sync_rejects_embedded_http_credentials_before_transport(tmp_path: Path)
     assert fetch_error.value.code is ErrorCode.AUTHENTICATION_ERROR
     assert clone_error.value.code is ErrorCode.AUTHENTICATION_ERROR
     assert not (tmp_path / "credential-clone").exists()
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "expected"),
+    [
+        ("fatal: Authentication failed", ErrorCode.AUTHENTICATION_ERROR),
+        ("remote: Write access to repository not granted", ErrorCode.PERMISSION_DENIED),
+        ("fatal: unable to access: Could not resolve host", ErrorCode.NETWORK_ERROR),
+        ("fatal: SSL certificate problem: self-signed certificate", ErrorCode.TLS_ERROR),
+        ("fatal: Connection timed out", ErrorCode.TIMEOUT),
+        ("remote: Repository not found", ErrorCode.NOT_FOUND),
+        ("fatal: server does not support requested capability", ErrorCode.PROVIDER_CAPABILITY_GAP),
+        ("! [rejected] main -> main (non-fast-forward)", ErrorCode.NON_FAST_FORWARD),
+        ("fatal: unclassified provider response", ErrorCode.REMOTE_ERROR),
+    ],
+)
+def test_remote_diagnostics_map_to_normalized_errors(
+    diagnostic: str,
+    expected: ErrorCode,
+) -> None:
+    result = subprocess.CompletedProcess(
+        args=["git", "fetch"],
+        returncode=1,
+        stdout="",
+        stderr=diagnostic,
+    )
+
+    assert remote_sync_module._classify_remote_failure(result) is expected
+
+
+def test_remote_error_does_not_expose_transport_diagnostic() -> None:
+    result = subprocess.CompletedProcess(
+        args=["git", "fetch"],
+        returncode=1,
+        stdout="",
+        stderr="Authentication failed for https://user:TOP-SECRET@example.invalid/repo.git",
+    )
+
+    with pytest.raises(ArchRepoError) as captured:
+        remote_sync_module._raise_remote_failure(result, operation="fetch")
+
+    assert captured.value.code is ErrorCode.AUTHENTICATION_ERROR
+    assert "TOP-SECRET" not in captured.value.message
+    assert "TOP-SECRET" not in str(captured.value.details)
+
+
+def test_network_timeout_is_normalized_without_subprocess_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_timeout(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise subprocess.TimeoutExpired(["git", "fetch"], timeout=120)
+
+    monkeypatch.setattr(remote_sync_module.subprocess, "run", raise_timeout)
+
+    with pytest.raises(ArchRepoError) as captured:
+        remote_sync_module._run_git(
+            None,
+            ["fetch", "origin"],
+            operation="fetch",
+            network=True,
+        )
+
+    assert captured.value.code is ErrorCode.TIMEOUT
+    assert captured.value.details == {}
+
+
+def test_missing_remote_repository_is_normalized_as_not_found(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.git"
+
+    with pytest.raises(ArchRepoError) as captured:
+        clone_repository(missing.as_uri(), tmp_path / "clone")
+
+    assert captured.value.code is ErrorCode.NOT_FOUND
+    assert not (tmp_path / "clone").exists()
+
+
+def test_remote_operations_do_not_run_implicit_sync_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source, remote = _make_source_and_remote(tmp_path)
+    consumer = _clone_consumer(remote, tmp_path)
+    original_run_git = remote_sync_module._run_git
+    commands: list[tuple[str, ...]] = []
+
+    def record_run_git(
+        root: Path | None,
+        arguments: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(tuple(arguments))
+        return original_run_git(root, arguments, **kwargs)
+
+    monkeypatch.setattr(remote_sync_module, "_run_git", record_run_git)
+    fetch_repository(consumer, "origin")
+    fetch_commands = commands.copy()
+    commands.clear()
+
+    update_entity(source, "fact", "facts/F-0001.md", REMOTE_CONTENT)
+    repository_commit(source, "Explicit publish command")
+    publish_repository(source, "origin", "main")
+    publish_commands = commands.copy()
+
+    assert any(command[0] == "fetch" for command in fetch_commands)
+    assert all("merge" not in command and "push" not in command for command in fetch_commands)
+    assert any(command[0] == "push" for command in publish_commands)
+    assert all("fetch" not in command and "merge" not in command for command in publish_commands)

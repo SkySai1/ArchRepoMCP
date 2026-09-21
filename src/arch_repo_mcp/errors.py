@@ -19,6 +19,7 @@ class ErrorCode(StrEnum):
     NON_FAST_FORWARD = "NON_FAST_FORWARD"
     GIT_ERROR = "GIT_ERROR"
     REMOTE_ERROR = "REMOTE_ERROR"
+    PROVIDER_CAPABILITY_GAP = "PROVIDER_CAPABILITY_GAP"
     NETWORK_ERROR = "NETWORK_ERROR"
     TIMEOUT = "TIMEOUT"
     TLS_ERROR = "TLS_ERROR"
@@ -47,4 +48,3 @@ class ArchRepoError(Exception):
             "message": self.message,
             "details": self.details,
         }
-

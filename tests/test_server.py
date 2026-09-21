@@ -22,6 +22,7 @@ def test_expected_mcp_tools_are_registered() -> None:
         "repository_commit",
         "repository_open",
         "repository_publish",
+        "repository_pull",
         "repository_remotes",
         "repository_status",
         "repository_validate",
