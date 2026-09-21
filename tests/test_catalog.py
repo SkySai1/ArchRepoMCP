@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from arch_repo_mcp.catalog import describe_repository, list_repositories
 from arch_repo_mcp.dsl import load_declaration
 from arch_repo_mcp.entities import (
     create_entity,
@@ -9,26 +10,17 @@ from arch_repo_mcp.entities import (
     read_related_entities,
     update_entity,
 )
-from arch_repo_mcp.government import (
-    describe_government_repository,
-    ensure_government_repository,
-    list_working_repositories,
-)
 from arch_repo_mcp.repository import create_repository
 from arch_repo_mcp.server import entity_list as mcp_entity_list
 from arch_repo_mcp.server import repository_open
-from arch_repo_mcp.workspace import (
-    GOVERNMENT_REPOSITORY_ENV,
-    WORKSPACE_ENV,
-    load_workspace_config,
-)
+from arch_repo_mcp.workspace import WORKSPACE_ENV, load_workspace_config
 
 PROJECT_ROOT = Path(__file__).parents[1]
 NORMATIVE_DSL = PROJECT_ROOT / "specs" / "dsl"
-PACKAGED_DSL = PROJECT_ROOT / "src" / "arch_repo_mcp" / "presets" / "government"
+PACKAGED_DSL = PROJECT_ROOT / "src" / "arch_repo_mcp" / "presets" / "default"
 
 
-def test_packaged_government_preset_matches_normative_dsl() -> None:
+def test_packaged_default_preset_matches_normative_dsl() -> None:
     normative = load_declaration(NORMATIVE_DSL / "architecture.yaml")
     packaged = load_declaration(PACKAGED_DSL / "architecture.yaml")
 
@@ -47,11 +39,7 @@ def test_workspace_config_precedence_is_stdio_then_environment_then_dotenv(
     environment_workspace = tmp_path / "from-environment"
     stdio_workspace = tmp_path / "from-stdio"
     env_file = tmp_path / ".env"
-    env_file.write_text(
-        f"{WORKSPACE_ENV}={file_workspace}\n"
-        f"{GOVERNMENT_REPOSITORY_ENV}=from-file-government\n",
-        encoding="utf-8",
-    )
+    env_file.write_text(f"{WORKSPACE_ENV}={file_workspace}\n", encoding="utf-8")
 
     file_config = load_workspace_config(
         env_file=env_file,
@@ -60,49 +48,30 @@ def test_workspace_config_precedence_is_stdio_then_environment_then_dotenv(
     )
     environment_config = load_workspace_config(
         env_file=env_file,
-        environment={
-            WORKSPACE_ENV: str(environment_workspace),
-            GOVERNMENT_REPOSITORY_ENV: "from-environment-government",
-        },
+        environment={WORKSPACE_ENV: str(environment_workspace)},
         create_workspace=True,
     )
-
     config = load_workspace_config(
         stdio_workspace,
-        "from-stdio-government",
         env_file,
-        environment={
-            WORKSPACE_ENV: str(environment_workspace),
-            GOVERNMENT_REPOSITORY_ENV: "from-environment-government",
-        },
+        environment={WORKSPACE_ENV: str(environment_workspace)},
         create_workspace=True,
     )
 
     assert config.root == stdio_workspace.resolve()
-    assert config.government_repository == (
-        stdio_workspace / "from-stdio-government"
-    ).resolve()
     assert file_config.root == file_workspace.resolve()
-    assert file_config.government_repository == (
-        file_workspace / "from-file-government"
-    ).resolve()
     assert environment_config.root == environment_workspace.resolve()
-    assert environment_config.government_repository == (
-        environment_workspace / "from-environment-government"
-    ).resolve()
 
 
-def test_government_repository_is_created_and_described_from_defaults(
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "repositories"
+def test_default_repository_is_atomic_and_describes_its_own_model(tmp_path: Path) -> None:
+    repository = tmp_path / "payments"
+    create_repository(repository)
 
-    description = describe_government_repository(workspace)
-    government = ensure_government_repository(workspace)
+    description = describe_repository(repository)
 
-    assert Path(description["government_repository_root"]) == workspace / "government"
-    assert government.created is False
-    assert (workspace / "government" / ".git").is_dir()
+    assert description["repository_root"] == str(repository.resolve())
+    assert (repository / ".git").is_dir()
+    assert (repository / "architecture.yaml").is_file()
     assert {entity["name"] for entity in description["entities"]} == {
         "fact",
         "requirement",
@@ -127,50 +96,49 @@ def test_government_repository_is_created_and_described_from_defaults(
         assert entity["format"] == declared.files.format.value
         assert entity["template_path"] == declared.files.template.as_posix()
         assert entity["template_content"] == (
-            NORMATIVE_DSL / Path(*declared.files.template.parts)
+            repository / Path(*declared.files.template.parts)
         ).read_text(encoding="utf-8")
 
 
-def test_repository_list_excludes_government_and_requires_explicit_selection(
-    tmp_path: Path,
-) -> None:
+def test_repository_list_returns_every_atomic_repository(tmp_path: Path) -> None:
     workspace = tmp_path / "repositories"
-    government = ensure_government_repository(workspace)
-    working = workspace / "payments"
-    create_repository(working, government.context.root / "architecture.yaml")
+    workspace.mkdir()
+    first = workspace / "payments"
+    second = workspace / "warehouse"
+    create_repository(first)
+    create_repository(second, NORMATIVE_DSL / "architecture.yaml")
 
-    result = list_working_repositories(workspace)
+    result = list_repositories(workspace)
 
-    assert result["government_repository_root"] == str(government.context.root)
-    assert result["repositories"] == [
-        {
-            "name": "payments",
-            "repository_path": str(working.resolve()),
-            "declaration_path": "architecture.yaml",
-            "valid": True,
-            "model_matches_government": True,
-            "entity_counts": {
-                "architecture_artifact": 0,
-                "category": 0,
-                "fact": 0,
-                "requirement": 0,
-            },
-            "issues": [],
-        }
+    assert result["workspace_root"] == str(workspace.resolve())
+    assert [item["name"] for item in result["repositories"]] == [
+        "payments",
+        "warehouse",
     ]
+    assert all(item["valid"] for item in result["repositories"])
+    assert all(
+        set(item) == {
+            "name",
+            "repository_path",
+            "declaration_path",
+            "valid",
+            "entity_counts",
+            "issues",
+        }
+        for item in result["repositories"]
+    )
 
 
-def test_agent_scenario_classifies_source_and_materializes_entities(
-    tmp_path: Path,
-) -> None:
+def test_agent_scenario_uses_the_selected_repository_model(tmp_path: Path) -> None:
     source_document = (
         "Система обязана хранить аудит 365 дней. "
         "События аудита уже передаются в локальный PostgreSQL."
     )
     workspace = tmp_path / "repositories"
-    model = describe_government_repository(workspace)
+    workspace.mkdir()
     working = workspace / "audit-platform"
-    create_repository(working, model["declaration_source"])
+    create_repository(working)
+    model = describe_repository(working)
 
     entity_names = {entity["name"] for entity in model["entities"]}
     assert {"requirement", "fact"} <= entity_names
@@ -225,8 +193,9 @@ relations:
 """,
     )
 
-    listed = list_working_repositories(workspace)["repositories"]
-    selected_repository = listed[0]["repository_path"]
+    selected_repository = list_repositories(workspace)["repositories"][0][
+        "repository_path"
+    ]
     assert read_entity(
         selected_repository, "requirement", "requirements/R-0001.md"
     )["content"].endswith("Система обязана хранить аудит 365 дней.\n")
@@ -240,7 +209,9 @@ relations:
     )["relations"]
     assert related[0]["entity"] == "requirement"
     assert related[0]["status"] == "found"
-    assert related[0]["content"].endswith("Система обязана хранить аудит 365 дней.\n")
+    assert related[0]["content"].endswith(
+        "Система обязана хранить аудит 365 дней.\n"
+    )
     assert related[1] == {
         "source_entity": "fact",
         "source_path": "facts/F-0001.md",
@@ -262,8 +233,8 @@ def test_stdio_tools_resolve_relative_repository_from_environment(
     monkeypatch,
 ) -> None:
     workspace = tmp_path / "repositories"
-    government = ensure_government_repository(workspace)
-    create_repository(workspace / "selected", government.context.root / "architecture.yaml")
+    workspace.mkdir()
+    create_repository(workspace / "selected")
     monkeypatch.setenv(WORKSPACE_ENV, str(workspace))
 
     result = repository_open("selected")
@@ -272,15 +243,15 @@ def test_stdio_tools_resolve_relative_repository_from_environment(
     assert result["result"]["repository_root"] == str((workspace / "selected").resolve())
 
 
-def test_entity_tools_reject_government_repository_when_workspace_is_configured(
+def test_entity_tools_accept_any_selected_atomic_repository(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     workspace = tmp_path / "repositories"
-    ensure_government_repository(workspace)
+    workspace.mkdir()
+    create_repository(workspace / "selected")
     monkeypatch.setenv(WORKSPACE_ENV, str(workspace))
 
-    result = mcp_entity_list("government", "fact")
+    result = mcp_entity_list("selected", "fact")
 
-    assert result["ok"] is False
-    assert result["error"]["code"] == "PERMISSION_DENIED"
+    assert result == {"ok": True, "result": []}

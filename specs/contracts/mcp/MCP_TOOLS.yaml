@@ -1,6 +1,6 @@
 contract:
   name: arch-repo-mcp-tools
-  version: '0.3'
+  version: '0.4'
   transport: stdio
 
 response_envelope:
@@ -9,37 +9,26 @@ response_envelope:
   normalized_error_fields: [code, message, details]
 
 tools:
-  government_repository_initialize:
-    arguments:
-      workspace_path: {type: nullable_string, required: false, default: null}
-      government_repository_path: {type: nullable_string, required: false, default: null}
-      env_file: {type: nullable_string, required: false, default: null}
-      initial_branch: {type: string, required: false, default: main}
-    result:
-      kind: object
-      fields: [workspace_root, government_repository_root, created, declaration_path, declaration, entities]
   repository_describe:
     arguments:
-      workspace_path: {type: nullable_string, required: false, default: null}
-      government_repository_path: {type: nullable_string, required: false, default: null}
-      env_file: {type: nullable_string, required: false, default: null}
+      repository_path: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
     result:
       kind: object
-      fields: [workspace_root, government_repository_root, declaration_path, declaration_source, declaration, workflow, entities]
+      fields: [repository_root, declaration_path, declaration, workflow, entities]
       entity_fields: [name, description, semantic_purpose, relations, path_rule, filename_rule, format, template_path, template_content]
   repository_list:
     arguments:
       workspace_path: {type: nullable_string, required: false, default: null}
-      government_repository_path: {type: nullable_string, required: false, default: null}
       env_file: {type: nullable_string, required: false, default: null}
     result:
       kind: object
-      fields: [workspace_root, government_repository_root, repositories]
-      repository_fields: [name, repository_path, declaration_path, valid, model_matches_government, entity_counts, issues]
+      fields: [workspace_root, repositories]
+      repository_fields: [name, repository_path, declaration_path, valid, entity_counts, issues]
   repository_create:
     arguments:
       target_path: {type: string, required: true}
-      declaration_source: {type: string, required: true}
+      declaration_source: {type: nullable_string, required: false, default: null}
       declaration_path: {type: string, required: false, default: architecture.yaml}
       initial_branch: {type: string, required: false, default: main}
     result: {kind: object, fields: [repository_root, declaration_path, declaration, entities]}

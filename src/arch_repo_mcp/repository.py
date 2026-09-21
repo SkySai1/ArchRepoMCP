@@ -25,6 +25,9 @@ from arch_repo_mcp.errors import ArchRepoError, ErrorCode
 from arch_repo_mcp.relation_model import parse_relation_groups
 
 DEFAULT_DECLARATION_PATH = "architecture.yaml"
+DEFAULT_PRESET_DECLARATION = (
+    Path(__file__).parent / "presets" / "default" / DEFAULT_DECLARATION_PATH
+)
 _GIT_TIMEOUT_SECONDS = 10
 
 
@@ -59,7 +62,7 @@ class RepositoryValidationReport:
 
 def create_repository(
     target_path: str | Path,
-    declaration_source: str | Path,
+    declaration_source: str | Path | None = None,
     declaration_path: str = DEFAULT_DECLARATION_PATH,
     initial_branch: str = "main",
 ) -> RepositoryContext:
@@ -69,7 +72,9 @@ def create_repository(
     relative_declaration = _validate_relative_file_path(
         declaration_path, label="declaration"
     )
-    source_file = _resolve_declaration_source(declaration_source)
+    source_file = _resolve_declaration_source(
+        DEFAULT_PRESET_DECLARATION if declaration_source is None else declaration_source
+    )
     declaration = load_declaration(source_file)
     source_root = source_file.parent
     templates = _resolve_source_templates(source_root, declaration)

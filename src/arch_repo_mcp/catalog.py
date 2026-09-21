@@ -1,8 +1,7 @@
-"""Government repository lifecycle, model description, and workspace inventory."""
+"""Description and discovery of self-contained architecture repositories."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -11,88 +10,46 @@ from arch_repo_mcp.errors import ArchRepoError, ErrorCode
 from arch_repo_mcp.repository import (
     DEFAULT_DECLARATION_PATH,
     RepositoryContext,
-    create_repository,
     open_repository,
     validate_repository,
 )
-from arch_repo_mcp.workspace import WorkspaceConfig, load_workspace_config
-
-_PRESET_DECLARATION = (
-    Path(__file__).parent / "presets" / "government" / DEFAULT_DECLARATION_PATH
-)
+from arch_repo_mcp.workspace import load_workspace_config
 
 
-@dataclass(frozen=True, slots=True)
-class GovernmentRepository:
-    config: WorkspaceConfig
-    context: RepositoryContext
-    created: bool
-
-
-def ensure_government_repository(
-    workspace_path: str | Path | None = None,
-    government_repository_path: str | Path | None = None,
-    env_file: str | Path | None = None,
-    *,
-    initial_branch: str = "main",
-) -> GovernmentRepository:
-    """Open the configured government repository or create the built-in preset."""
-
-    config = load_workspace_config(
-        workspace_path,
-        government_repository_path,
-        env_file,
-        create_workspace=True,
-    )
-    target = config.government_repository
-    if target.exists() or target.is_symlink():
-        context = open_repository(target)
-        return GovernmentRepository(config=config, context=context, created=False)
-
-    context = create_repository(
-        target,
-        _PRESET_DECLARATION,
-        initial_branch=initial_branch,
-    )
-    return GovernmentRepository(config=config, context=context, created=True)
-
-
-def describe_government_repository(
-    workspace_path: str | Path | None = None,
-    government_repository_path: str | Path | None = None,
-    env_file: str | Path | None = None,
+def describe_repository(
+    repository_path: str | Path,
+    declaration_path: str = DEFAULT_DECLARATION_PATH,
 ) -> dict[str, Any]:
-    """Return the complete AI-facing entity model from the government repository."""
+    """Return the AI-facing DSL model stored in one selected repository."""
 
-    government = ensure_government_repository(
-        workspace_path,
-        government_repository_path,
-        env_file,
-    )
-    context = government.context
+    context = open_repository(repository_path, declaration_path)
     return {
-        "workspace_root": str(government.config.root),
-        "government_repository_root": str(context.root),
+        "repository_root": str(context.root),
         "declaration_path": context.declaration_path.as_posix(),
-        "declaration_source": str(context.root / context.declaration_path),
         "declaration": {
             "kind": context.declaration.kind,
             "version": context.declaration.version,
         },
         "workflow": {
-            "model_source": "repository_describe",
+            "model_source": "selected_repository",
             "repository_selection": {
                 "tool": "repository_list",
-                "rule": "Select one returned repository_path and pass it explicitly.",
+                "rule": (
+                    "Select one repository_path, call repository_describe for it, and use "
+                    "only that repository's DSL and templates."
+                ),
             },
-            "working_repository_creation": {
+            "repository_creation": {
                 "tool": "repository_create",
-                "rule": "Use declaration_source from this response and a target inside workspace.",
+                "rule": (
+                    "Create an atomic repository from the built-in default bundle or an "
+                    "explicit declaration bundle."
+                ),
             },
             "create": {
                 "tool": "entity_create",
                 "next_tool": "entity_update",
-                "rule": "Create from the declared template, then replace it with complete content.",
+                "rule": "Create from the local template, then replace it with complete content.",
             },
             "read": {
                 "tools": [
@@ -113,19 +70,17 @@ def describe_government_repository(
     }
 
 
-def list_working_repositories(
+def list_repositories(
     workspace_path: str | Path | None = None,
-    government_repository_path: str | Path | None = None,
     env_file: str | Path | None = None,
 ) -> dict[str, Any]:
-    """List immediate working Git repositories without selecting one implicitly."""
+    """List immediate atomic Git repositories without selecting one implicitly."""
 
-    government = ensure_government_repository(
+    config = load_workspace_config(
         workspace_path,
-        government_repository_path,
         env_file,
+        create_workspace=True,
     )
-    config = government.config
     repositories: list[dict[str, Any]] = []
     try:
         children = sorted(config.root.iterdir(), key=lambda path: path.name.casefold())
@@ -136,13 +91,11 @@ def list_working_repositories(
         ) from exc
 
     for candidate in children:
-        if candidate.is_symlink() or not candidate.is_dir():
+        if candidate.is_symlink() or not candidate.is_dir() or not (candidate / ".git").exists():
             continue
         try:
             resolved = candidate.resolve(strict=True)
         except OSError:
-            continue
-        if resolved == government.context.root or not (candidate / ".git").exists():
             continue
         try:
             report = validate_repository(candidate)
@@ -151,8 +104,6 @@ def list_working_repositories(
                 "repository_path": str(resolved),
                 "declaration_path": report.declaration_path,
                 "valid": report.valid,
-                "model_matches_government": report.valid
-                and _model_matches_government(government.context, candidate),
                 "entity_counts": report.entity_counts,
                 "issues": [issue.as_dict() for issue in report.issues],
             }
@@ -162,7 +113,6 @@ def list_working_repositories(
                 "repository_path": str(resolved),
                 "declaration_path": DEFAULT_DECLARATION_PATH,
                 "valid": False,
-                "model_matches_government": False,
                 "entity_counts": {},
                 "issues": [
                     {
@@ -176,24 +126,8 @@ def list_working_repositories(
 
     return {
         "workspace_root": str(config.root),
-        "government_repository_root": str(government.context.root),
         "repositories": repositories,
     }
-
-
-def _model_matches_government(government: RepositoryContext, candidate: Path) -> bool:
-    try:
-        working = open_repository(candidate)
-        if working.declaration != government.declaration:
-            return False
-        for entity in government.declaration.entities:
-            government_template = government.root.joinpath(*entity.files.template.parts)
-            working_template = working.root.joinpath(*entity.files.template.parts)
-            if government_template.read_bytes() != working_template.read_bytes():
-                return False
-    except (ArchRepoError, OSError):
-        return False
-    return True
 
 
 def _describe_entity(
@@ -206,7 +140,7 @@ def _describe_entity(
     except (OSError, UnicodeError) as exc:
         raise ArchRepoError(
             ErrorCode.INVALID_REPOSITORY,
-            "Government repository template could not be read as UTF-8",
+            "Repository template could not be read as UTF-8",
             details={"path": entity.files.template.as_posix()},
         ) from exc
     return {

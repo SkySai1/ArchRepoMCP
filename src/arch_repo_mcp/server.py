@@ -8,6 +8,7 @@ from typing import Any, TypeVar
 from mcp.server import MCPServer
 
 from arch_repo_mcp import __version__
+from arch_repo_mcp.catalog import describe_repository, list_repositories
 from arch_repo_mcp.entities import (
     create_entity,
     delete_entity,
@@ -18,11 +19,6 @@ from arch_repo_mcp.entities import (
     update_entity,
 )
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
-from arch_repo_mcp.government import (
-    describe_government_repository,
-    ensure_government_repository,
-    list_working_repositories,
-)
 from arch_repo_mcp.local_git import (
     configure_remote,
     create_branch,
@@ -52,10 +48,7 @@ from arch_repo_mcp.repository import (
     open_repository,
     validate_repository,
 )
-from arch_repo_mcp.workspace import (
-    resolve_repository_argument,
-    resolve_working_repository_argument,
-)
+from arch_repo_mcp.workspace import resolve_repository_argument
 
 ResultT = TypeVar("ResultT")
 
@@ -63,9 +56,9 @@ mcp = MCPServer(
     "ArchRepoMCP",
     description="Local-first management of DSL-defined architecture Git repositories",
     instructions=(
-        "Call repository_describe to obtain the authoritative entity model, then repository_list "
-        "and explicitly pass one selected repository_path to every entity operation. Network "
-        "access occurs only through the "
+        "Call repository_list, select one repository_path, and call repository_describe to "
+        "obtain that repository's authoritative DSL and templates before entity operations. "
+        "Every repository is self-contained. Network access occurs only through the "
         "explicit repository_clone, repository_fetch, repository_pull, and "
         "repository_publish tools; no tool performs an implicit pull, push, or provider API "
         "request. Paths must identify local Git repositories and repository-relative files."
@@ -102,55 +95,17 @@ def _managed_path(path: str) -> str:
     return str(resolve_repository_argument(path))
 
 
-def _working_path(path: str) -> str:
-    """Resolve an explicitly selected repository and reject the government repository."""
-
-    return str(resolve_working_repository_argument(path))
-
-
-@mcp.tool()
-def government_repository_initialize(
-    workspace_path: str | None = None,
-    government_repository_path: str | None = None,
-    env_file: str | None = None,
-    initial_branch: str = "main",
-) -> dict[str, Any]:
-    """Open or create the government repository from the built-in DSL and templates."""
-
-    def initialize() -> dict[str, Any]:
-        government = ensure_government_repository(
-            workspace_path,
-            government_repository_path,
-            env_file,
-            initial_branch=initial_branch,
-        )
-        return {
-            "workspace_root": str(government.config.root),
-            "government_repository_root": str(government.context.root),
-            "created": government.created,
-            **{
-                key: value
-                for key, value in _repository_result(government.context).items()
-                if key != "repository_root"
-            },
-        }
-
-    return _call(initialize)
-
-
 @mcp.tool()
 def repository_describe(
-    workspace_path: str | None = None,
-    government_repository_path: str | None = None,
-    env_file: str | None = None,
+    repository_path: str,
+    declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
-    """Return the authoritative DSL model, templates, and entity-management workflow."""
+    """Return the selected repository's authoritative DSL, templates, and workflow."""
 
     return _call(
-        lambda: describe_government_repository(
-            workspace_path,
-            government_repository_path,
-            env_file,
+        lambda: describe_repository(
+            _managed_path(repository_path),
+            declaration_path,
         )
     )
 
@@ -158,15 +113,13 @@ def repository_describe(
 @mcp.tool()
 def repository_list(
     workspace_path: str | None = None,
-    government_repository_path: str | None = None,
     env_file: str | None = None,
 ) -> dict[str, Any]:
-    """List working repositories so an agent can explicitly select a repository_path."""
+    """List atomic repositories so an agent can explicitly select a repository_path."""
 
     return _call(
-        lambda: list_working_repositories(
+        lambda: list_repositories(
             workspace_path,
-            government_repository_path,
             env_file,
         )
     )
@@ -175,11 +128,11 @@ def repository_list(
 @mcp.tool()
 def repository_create(
     target_path: str,
-    declaration_source: str,
+    declaration_source: str | None = None,
     declaration_path: str = "architecture.yaml",
     initial_branch: str = "main",
 ) -> dict[str, Any]:
-    """Create a validated local Git repository without creating a commit."""
+    """Create an atomic repository from a default or explicit DSL bundle."""
 
     return _call(
         lambda: _repository_result(
@@ -450,7 +403,7 @@ def entity_list(
     return _call(
         lambda: [
             item.as_dict()
-            for item in list_entities(_working_path(repository_path), entity_name, declaration_path)
+            for item in list_entities(_managed_path(repository_path), entity_name, declaration_path)
         ]
     )
 
@@ -466,7 +419,7 @@ def entity_create(
 
     return _call(
         lambda: create_entity(
-            _working_path(repository_path),
+            _managed_path(repository_path),
             entity_name,
             entity_path,
             declaration_path,
@@ -485,7 +438,7 @@ def entity_read(
 
     return _call(
         lambda: read_entity(
-            _working_path(repository_path),
+            _managed_path(repository_path),
             entity_name,
             entity_path,
             declaration_path,
@@ -504,7 +457,7 @@ def entity_read_related(
 
     return _call(
         lambda: read_related_entities(
-            _working_path(repository_path),
+            _managed_path(repository_path),
             entity_name,
             entity_path,
             declaration_path,
@@ -524,7 +477,7 @@ def entity_update(
 
     return _call(
         lambda: update_entity(
-            _working_path(repository_path),
+            _managed_path(repository_path),
             entity_name,
             entity_path,
             content,
@@ -544,7 +497,7 @@ def entity_delete(
 
     return _call(
         lambda: delete_entity(
-            _working_path(repository_path),
+            _managed_path(repository_path),
             entity_name,
             entity_path,
             declaration_path,
@@ -566,7 +519,7 @@ def entity_search(
         lambda: [
             item.as_dict()
             for item in search_entities(
-                _working_path(repository_path),
+                _managed_path(repository_path),
                 query,
                 entity_name,
                 declaration_path,

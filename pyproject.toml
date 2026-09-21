@@ -28,8 +28,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 arch_repo_mcp = [
-    "presets/government/*.yaml",
-    "presets/government/templates/*.md",
+    "presets/default/*.yaml",
+    "presets/default/templates/*.md",
 ]
 
 [tool.pytest.ini_options]

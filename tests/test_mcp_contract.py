@@ -112,26 +112,15 @@ def _result_samples() -> dict[str, object]:
         "template_content": "---\ntitle: Example\n---\n",
     }
     return {
-        "government_repository_initialize": {
-            "workspace_root": "workspace",
-            "government_repository_root": "workspace/government",
-            "created": True,
-            "declaration_path": "architecture.yaml",
-            "declaration": {"kind": "architecture_repository", "version": "v2"},
-            "entities": ["fact"],
-        },
         "repository_describe": {
-            "workspace_root": "workspace",
-            "government_repository_root": "workspace/government",
+            "repository_root": "workspace/repository",
             "declaration_path": "architecture.yaml",
-            "declaration_source": "workspace/government/architecture.yaml",
             "declaration": {"kind": "architecture_repository", "version": "v2"},
             "workflow": {},
             "entities": [described_entity],
         },
         "repository_list": {
             "workspace_root": "workspace",
-            "government_repository_root": "workspace/government",
             "repositories": [],
         },
         "repository_create": repository,

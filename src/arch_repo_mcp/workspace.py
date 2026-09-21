@@ -10,9 +10,7 @@ from pathlib import Path
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
 
 WORKSPACE_ENV = "ARCH_REPO_MCP_WORKSPACE"
-GOVERNMENT_REPOSITORY_ENV = "ARCH_REPO_MCP_GOVERNMENT_REPOSITORY"
 ENV_FILE_ENV = "ARCH_REPO_MCP_ENV_FILE"
-DEFAULT_GOVERNMENT_REPOSITORY = "government"
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,12 +18,10 @@ class WorkspaceConfig:
     """Resolved local locations used by MCP repository discovery."""
 
     root: Path
-    government_repository: Path
 
 
 def load_workspace_config(
     workspace_path: str | Path | None = None,
-    government_repository_path: str | Path | None = None,
     env_file: str | Path | None = None,
     *,
     environment: Mapping[str, str] | None = None,
@@ -59,15 +55,7 @@ def load_workspace_config(
         create=create_workspace,
     )
 
-    raw_government = _first_value(
-        government_repository_path,
-        source.get(GOVERNMENT_REPOSITORY_ENV),
-        file_values.get(GOVERNMENT_REPOSITORY_ENV),
-        DEFAULT_GOVERNMENT_REPOSITORY,
-    )
-    assert raw_government is not None
-    government = _resolve_government_repository(raw_government, root)
-    return WorkspaceConfig(root=root, government_repository=government)
+    return WorkspaceConfig(root=root)
 
 
 def configured_workspace_root(
@@ -107,25 +95,6 @@ def resolve_repository_argument(path: str | Path) -> Path:
             ErrorCode.PERMISSION_DENIED,
             "Repository path is outside the configured workspace",
             details={"path": str(path), "workspace_root": str(root)},
-        )
-    return resolved
-
-
-def resolve_working_repository_argument(path: str | Path) -> Path:
-    """Resolve a selected working repository and reject the government repository."""
-
-    resolved = resolve_repository_argument(path)
-    if configured_workspace_root() is None:
-        return resolved
-    config = load_workspace_config()
-    candidate = resolved.resolve(strict=False)
-    if candidate == config.government_repository or candidate.is_relative_to(
-        config.government_repository
-    ):
-        raise ArchRepoError(
-            ErrorCode.PERMISSION_DENIED,
-            "Entity operations require an explicitly selected working repository",
-            details={"path": str(path)},
         )
     return resolved
 
@@ -239,36 +208,6 @@ def _resolve_workspace_root(value: str, *, base: Path, create: bool) -> Path:
             details={"path": str(root)},
         )
     return root
-
-
-def _resolve_government_repository(value: str, root: Path) -> Path:
-    raw = Path(value).expanduser()
-    candidate = raw if raw.is_absolute() else root / raw
-    if raw.is_absolute() and not candidate.is_relative_to(root):
-        raise ArchRepoError(
-            ErrorCode.PERMISSION_DENIED,
-            "Government repository must be inside the configured workspace",
-            details={"path": str(candidate), "workspace_root": str(root)},
-        )
-    if not raw.is_absolute() and value in {"", ".", ".."}:
-        raise ArchRepoError(
-            ErrorCode.VALIDATION_ERROR,
-            "Government repository path must identify a repository inside the workspace",
-        )
-    try:
-        resolved = candidate.resolve(strict=False)
-    except OSError as exc:
-        raise ArchRepoError(
-            ErrorCode.INVALID_REPOSITORY,
-            "Government repository path could not be resolved",
-        ) from exc
-    if not resolved.is_relative_to(root) or resolved == root:
-        raise ArchRepoError(
-            ErrorCode.PERMISSION_DENIED,
-            "Government repository must be inside the configured workspace",
-            details={"path": str(resolved), "workspace_root": str(root)},
-        )
-    return resolved
 
 
 def _first_value(*values: str | Path | None) -> str | None:

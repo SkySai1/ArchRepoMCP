@@ -12,16 +12,21 @@
 - [x] Создание, открытие и полная локальная validation architecture repository.
 - [x] Локальные операции Entity Service: list, read, search, create, update и delete.
 - [x] Local Git: status, diff, history, commit, branches и remotes.
-- [x] Явные `repository_clone`, `repository_fetch` и `repository_publish`.
+- [x] Явные `repository_clone`, `repository_fetch`, безопасный fast-forward
+  `repository_pull` и `repository_publish`.
 - [x] Защита publish от dirty working tree и non-fast-forward.
 - [x] Запрет embedded HTTP credentials в remote URL.
 - [x] Базовые unit, repository, entity, Git, remote sync и MCP tests.
 
 ## Текущий обязательный этап
 
-- [x] Создать MCP tool, формирующий government repository с описанием DSL-структуры из `specs/dsl/architecture.yaml`.
+- [x] Удалить отдельный управляющий repository: каждый architecture repository содержит
+  собственные DSL-декларацию и templates и является атомарным.
+- [x] Добавить встроенный default DSL bundle из `specs/dsl/architecture.yaml` для создания
+  нового самодостаточного repository без внешней декларации.
 - [x] Настроить workspace через stdio-аргумент, process environment или `.env`; все MCP repository paths разрешаются внутри настроенного workspace.
-- [x] Добавить MCP-инструмент `repository_describe`, позволяющий AI-агенту получить полное описание модели управляемого repository.
+- [x] Добавить MCP-инструмент `repository_describe`, позволяющий AI-агенту получить полное
+  описание модели явно выбранного repository из его локальных DSL и templates.
 - [x] Для каждой DSL entity возвращать:
   name;
   description;
@@ -32,8 +37,11 @@
   format;
   путь к template;
   содержимое template.
-- [x] Обеспечить возможность AI-агенту перед обработкой исходных документов получить модель repository через MCP и использовать её как единственный источник правил классификации и создания entities.
-- [x] Добавить `repository_list`: government repository исключается из рабочих, совместимость модели отображается явно, а entity-tools требуют выбранный `repository_path`.
+- [x] Обеспечить возможность AI-агенту перед обработкой исходных документов получить модель
+  выбранного repository через MCP и использовать её как единственный источник правил
+  классификации и создания entities.
+- [x] Добавить `repository_list`, перечисляющий все атомарные repositories без сравнения их
+  моделей и без неявного выбора; entity-tools требуют выбранный `repository_path`.
 - [x] Добавить contract tests для нового MCP-инструмента и проверку соответствия возвращаемого описания фактической DSL-декларации и templates.
 - [x] Добавить integration test сценария: исходное техническое задание → анализ AI-агентом → классификация информации по entity types → создание файлов через entity_create / entity_update согласно DSL и templates.
 - [x] Добавить instance-level связи в front matter (`relations[].entity` + `files[]`) и MCP-инструмент `entity_read_related`; DSL при этом содержит только допустимые entity types, а отсутствующий target возвращается как валидная связь со статусом `missing`.
@@ -43,13 +51,13 @@
 - [ ] [MUST] Разделять transport failures на `AUTHENTICATION_ERROR`,
   `PERMISSION_DENIED`, `NETWORK_ERROR`, `TLS_ERROR`, `TIMEOUT`, `NOT_FOUND` и
   `PROVIDER_CAPABILITY_GAP` без возврата чувствительного stderr.
-- [ ] [MUST] Реализовать явный `repository_pull` только для безопасной fast-forward
+- [x] Реализовать явный `repository_pull` только для безопасной fast-forward
   интеграции с validation fetched tree до изменения working tree.
-- [ ] [MUST] Отклонять pull при dirty state, divergence и конфликтующем history без
+- [x] Отклонять pull при dirty state, divergence и конфликтующем history без
   implicit stash, reset, rebase или conflict resolution.
-- [ ] [MUST] Добавить contract tests полного набора MCP tools: имена, аргументы,
+- [x] Добавить contract tests полного набора MCP tools: имена, аргументы,
   обязательность, defaults и публичные result models.
-- [ ] [MUST] Проверить отсутствие implicit fetch, pull, merge и push в локальных и
+- [x] Проверить отсутствие implicit fetch, pull, merge и push в локальных и
   однонаправленных remote-операциях.
 - [ ] [MUST] Добавить детерминированные tests для authentication, permissions, TLS,
   timeout, unavailable remote, missing repository и provider capability failures.

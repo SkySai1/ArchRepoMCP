@@ -4,10 +4,11 @@ MCP-сервер для локального управления архитек
 сущностей задаётся декларацией DSL, а удалённые Git-сервисы рассматриваются только как
 явный контур синхронизации.
 
-Текущий MVP позволяет AI-агенту сначала получить из government repository полную модель
-сущностей и шаблоны, затем явно выбрать рабочий repository и локально управлять его
-содержимым. Доступ к remote выполняется только через отдельные явные операции; остальные
-возможности полностью работают offline.
+Текущий MVP позволяет AI-агенту получить список локальных repositories, явно выбрать один из
+них и прочитать его собственные DSL-декларацию и шаблоны перед работой с сущностями. Каждый
+repository атомарен и не зависит от отдельного управляющего repository. Доступ к remote
+выполняется только через отдельные явные операции; остальные возможности полностью работают
+offline.
 
 ## Реализовано
 
@@ -18,8 +19,10 @@ MCP-сервер для локального управления архитек
 - repository confinement и запрет symbolic-link обходов;
 - проверка templates, конфликтов file matching и форматов файлов;
 - безопасное создание repository из декларации и её template bundle;
-- автоматически создаваемый government repository со встроенным нормативным preset;
-- описание AI-facing модели через `repository_describe` и явный выбор через `repository_list`;
+- атомарный repository, содержащий собственные `architecture.yaml` и templates;
+- встроенный default preset для создания нового самодостаточного repository;
+- описание модели выбранного repository через `repository_describe` и явный выбор через
+  `repository_list`;
 - единый локальный workspace, настраиваемый через stdio, environment или `.env`;
 - Entity Service: `list`, `read`, `search`, `create`, `update`, `delete`;
 - rollback entity mutations, не прошедших полную repository validation;
@@ -34,7 +37,7 @@ MCP-сервер для локального управления архитек
 ```text
 MCP tools
    │
-   ├── Government Model ───── initialize / describe / list repositories
+   ├── Repository Catalog ─── list / describe
    ├── Repository Service ─── create / open / validate
    ├── Entity Service ────── list / read / search / create / update / delete
    ├── Local Git Service ─── status / diff / history / commit / branches / remotes
@@ -95,8 +98,7 @@ python -m arch_repo_mcp.server
     "arch-repo": {
       "command": "arch-repo-mcp",
       "env": {
-        "ARCH_REPO_MCP_WORKSPACE": "D:\\ArchitectureRepositories",
-        "ARCH_REPO_MCP_GOVERNMENT_REPOSITORY": "government"
+        "ARCH_REPO_MCP_WORKSPACE": "D:\\ArchitectureRepositories"
       }
     }
   }
@@ -108,26 +110,26 @@ python -m arch_repo_mcp.server
 
 ### Workspace и `.env`
 
-`ARCH_REPO_MCP_WORKSPACE` задаёт локальную директорию, внутри которой находятся government
-и все рабочие repositories. `ARCH_REPO_MCP_GOVERNMENT_REPOSITORY` задаёт абсолютный путь
-внутри workspace либо относительный путь; значение по умолчанию — `government`.
+`ARCH_REPO_MCP_WORKSPACE` задаёт локальную директорию, внутри которой находятся все атомарные
+repositories. Особого управляющего repository в workspace нет.
 
 Те же значения можно сохранить в `.env` текущей директории процесса:
 
 ```dotenv
 ARCH_REPO_MCP_WORKSPACE=D:/ArchitectureRepositories
-ARCH_REPO_MCP_GOVERNMENT_REPOSITORY=government
 ```
 
-Другой env-файл выбирается через `ARCH_REPO_MCP_ENV_FILE`. Для
-`government_repository_initialize`, `repository_describe` и `repository_list` значения
-можно передать непосредственно по stdio в аргументах `workspace_path`,
-`government_repository_path` и `env_file`. Приоритет: stdio-аргумент, process environment,
-`.env`, затем документированное имя government repository по умолчанию.
+Другой env-файл выбирается через `ARCH_REPO_MCP_ENV_FILE`. Для `repository_list` workspace
+можно передать непосредственно по stdio в аргументах `workspace_path` и `env_file`.
+Приоритет: stdio-аргумент, process environment, затем `.env`.
 
 Если workspace настроен, относительные `repository_path` и `target_path` разрешаются внутри
-него, а выход за его границы отклоняется. Entity tools дополнительно запрещают использовать
-government repository как рабочий.
+него, а выход за его границы отклоняется.
+
+При обновлении с предыдущей модели удалите `ARCH_REPO_MCP_GOVERNMENT_REPOSITORY` из окружения
+и конфигурации MCP host. Сервер больше не создаёт, не выделяет и не удаляет управляющий
+repository. Существующий каталог с таким назначением останется на диске и будет восприниматься
+как обычный architecture repository, если содержит валидные локальные DSL и templates.
 
 ## Запуск в Goose на macOS
 
@@ -168,8 +170,7 @@ goose configure
 - command: `/Users/you/src/ArchRepoMCP/.venv/bin/arch-repo-mcp`;
 - timeout: `300`;
 - environment variable `ARCH_REPO_MCP_WORKSPACE`:
-  `/Users/you/ArchitectureRepositories`;
-- environment variable `ARCH_REPO_MCP_GOVERNMENT_REPOSITORY`: `government`.
+  `/Users/you/ArchitectureRepositories`.
 
 После добавления запустите обычную сессию:
 
@@ -181,7 +182,7 @@ goose session
 
 ```bash
 goose session --with-extension \
-  "ARCH_REPO_MCP_WORKSPACE=/Users/you/ArchitectureRepositories ARCH_REPO_MCP_GOVERNMENT_REPOSITORY=government /Users/you/src/ArchRepoMCP/.venv/bin/arch-repo-mcp"
+  "ARCH_REPO_MCP_WORKSPACE=/Users/you/ArchitectureRepositories /Users/you/src/ArchRepoMCP/.venv/bin/arch-repo-mcp"
 ```
 
 ### Goose Desktop (GUI)
@@ -190,14 +191,15 @@ goose session --with-extension \
 2. Нажмите `Add custom extension`.
 3. Выберите type `Standard IO`, задайте ID `arch-repo-mcp`, name `ArchRepoMCP` и command
    `/Users/you/src/ArchRepoMCP/.venv/bin/arch-repo-mcp`.
-4. Добавьте через отдельную кнопку `Add` обе переменные окружения из CLI-инструкции выше и
-   установите timeout `300`.
+4. Добавьте через отдельную кнопку `Add` переменную `ARCH_REPO_MCP_WORKSPACE` из
+   CLI-инструкции выше и установите timeout `300`.
 5. Нажмите `Add`, убедитесь, что extension включён, и начните новую сессию.
 
-Для проверки подключения попросите Goose: `Вызови repository_describe, затем repository_list`.
-Первый вызов автоматически создаст government repository со встроенными DSL-декларацией и
-шаблонами, если его ещё нет. Конфигурация CLI и Desktop общая и хранится Goose в
-`~/.config/goose/config.yaml`.
+Для проверки подключения попросите Goose: `Вызови repository_list`. Если список пуст,
+попросите создать repository через `repository_create` с `target_path="example"`, после чего
+вызвать `repository_describe` с `repository_path="example"`. Новый repository получит
+собственные DSL-декларацию и templates из default preset. Конфигурация CLI и Desktop общая и
+хранится Goose в `~/.config/goose/config.yaml`.
 
 Актуальные названия пунктов интерфейса и варианты установки приведены в официальной
 [инструкции по установке Goose](https://goose-docs.ai/docs/getting-started/installation/) и
@@ -207,10 +209,9 @@ goose session --with-extension \
 
 | Tool | Назначение |
 | --- | --- |
-| `government_repository_initialize` | Открыть или создать government repository из встроенного DSL preset |
-| `repository_describe` | Получить entity semantics, relations, file rules и полное содержимое templates |
-| `repository_list` | Получить рабочие repositories для явного выбора `repository_path` |
-| `repository_create` | Создать локальный Git repository из DSL declaration bundle |
+| `repository_describe` | Получить DSL, entity semantics и содержимое templates выбранного repository |
+| `repository_list` | Получить атомарные repositories для явного выбора `repository_path` |
+| `repository_create` | Создать самодостаточный Git repository из default или указанного DSL bundle |
 | `repository_open` | Открыть и полностью проверить локальный architecture repository |
 | `repository_validate` | Получить детальный validation report без изменения repository |
 | `repository_status` | Получить структурированный локальный Git status |
@@ -263,22 +264,29 @@ DSL validation и остаётся доступен для диагностик�
 
 ### Сценарий AI-агента
 
-1. Вызвать `repository_describe`; отсутствующий government repository будет создан из
-   встроенных `architecture.yaml` и templates без commit или remote.
-2. Использовать возвращённые `description`, `relations`, `path_rule`, `filename_rule`,
-   `format` и `template_content` как источник правил классификации исходного текста.
-3. Вызвать `repository_list`, выбрать только валидный repository с
-   `model_matches_government=true` и явно передавать его `repository_path` во все entity tools.
+1. Вызвать `repository_list` и явно выбрать один валидный `repository_path`. Если repository
+   ещё нет, создать его через `repository_create`; без `declaration_source` будет использован
+   встроенный default preset.
+2. Вызвать `repository_describe` для выбранного repository. Использовать возвращённые
+   `description`, `relations`, `path_rule`, `filename_rule`, `format` и `template_content`
+   только из этого repository как источник правил классификации исходного текста.
+3. Явно передавать выбранный `repository_path` во все entity tools и не смешивать модели
+   разных repositories в одной операции.
 4. Для каждого результата классификации вызвать `entity_create`, затем `entity_update` с
-   полным UTF-8 содержимым по шаблону.
+   полным UTF-8 содержимым по локальному шаблону.
 5. Отдельно проверить изменения и при необходимости явно выполнить commit/publish.
 
 ### Создание repository
 
-`repository_create` принимает отсутствующий `target_path` и путь к исходной DSL-декларации
-`declaration_source`. Все указанные декларацией templates должны находиться рядом с ней по
-repository-relative путям. Сначала bundle полностью проверяется, затем во временном
+`repository_create` принимает отсутствующий `target_path` и необязательный путь к исходной
+DSL-декларации `declaration_source`. Если источник не передан, используется встроенный default
+preset. Для явного источника все указанные декларацией templates должны находиться рядом с ней
+по repository-relative путям. Сначала bundle полностью проверяется, затем во временном
 staging-каталоге выполняется `git init`, и только валидный результат переносится в target.
+
+После создания `architecture.yaml` и все объявленные templates копируются внутрь target.
+Дальнейшие `repository_describe`, validation и entity-операции читают только локальную модель
+этого repository; изменение default preset или DSL другого repository на него не влияет.
 
 Начальная ветка задаётся параметром `initial_branch` с документированным значением по
 умолчанию `main`. Операция не создаёт commit и не настраивает remote.
