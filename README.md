@@ -19,13 +19,13 @@ AI-агенту создать, открыть и проверить локал�
 - безопасное создание repository из декларации и её template bundle;
 - Entity Service: `list`, `read`, `search`, `create`, `update`, `delete`;
 - rollback entity mutations, не прошедших полную repository validation;
-- Local Git Service: `status`, `diff`, `history`, `list/create branch`;
+- Local Git Service: `status`, `diff`, `history`, `commit`, branches и remotes;
 - MCP server на официальном Python SDK v2 со stdio transport;
 - нормализованная модель ошибок;
 - автоматические DSL, repository, entity и MCP contract tests.
 
-Пока не реализованы commit, branch switch, remotes, clone/pull/publish и Forgejo provider.
-Они будут добавляться отдельными слоями в соответствии с дорожной картой из `AGENTS.md`.
+Пока не реализованы clone/fetch/pull/publish и Forgejo provider. Они будут добавляться
+отдельными слоями в соответствии с дорожной картой из `AGENTS.md`.
 
 ## Архитектура текущего среза
 
@@ -34,7 +34,7 @@ MCP tools
    │
    ├── Repository Service ── create / open / validate
    ├── Entity Service ────── list / read / search / create / update / delete
-   └── Local Git Service ─── status / diff / history / branches
+   └── Local Git Service ─── status / diff / history / commit / branches / remotes
                 │
                 ├── DSL v2 Engine
                 │
@@ -108,8 +108,12 @@ python -m arch_repo_mcp.server
 | `repository_status` | Получить структурированный локальный Git status |
 | `repository_diff` | Получить working-tree, staged или revision diff |
 | `repository_history` | Получить ограниченную локальную commit history |
+| `repository_commit` | Валидировать и закоммитить только DSL-controlled paths |
 | `repository_branches` | Получить список локальных веток |
 | `branch_create` | Создать локальную ветку без автоматического switch |
+| `branch_switch` | Переключиться на валидную локальную ветку из clean state |
+| `repository_remotes` | Получить remotes с очищенными URL |
+| `remote_configure` | Добавить или явно заменить remote без сетевого запроса |
 | `entity_create` | Создать entity из объявленного template |
 | `entity_list` | Получить список экземпляров указанного DSL entity |
 | `entity_read` | Прочитать один экземпляр по repository-relative path |
@@ -158,6 +162,21 @@ staging-каталоге выполняется `git init`, и только ва
 `entity_update` принимает полное новое UTF-8 содержимое. Все три mutation tools оставляют
 изменения только в working tree, выполняют полную validation и восстанавливают исходное
 состояние при ошибке. Commit или push автоматически не выполняются.
+
+### Local Git operations
+
+`repository_commit` сначала выполняет полную repository validation, затем включает в
+commit только изменённые declaration, templates и файлы, однозначно принадлежащие DSL
+entities. Посторонние staged-файлы не попадают в commit и остаются в index. Push не
+выполняется.
+
+`branch_switch` разрешён только при полностью чистых index и working tree. Remote branch
+guessing, stash, reset и автоматическое разрешение конфликтов не используются. Если target
+branch не проходит validation, MCP возвращается на исходную ветку и сообщает ошибку.
+
+`remote_configure` изменяет только локальный `.git/config`. Замена существующего remote
+требует явного `replace=true`. HTTP(S) URL со встроенными credentials, query или fragment
+отклоняются; `repository_remotes` удаляет credential-bearing части из возвращаемых URL.
 
 ## Минимальная DSL-декларация
 
