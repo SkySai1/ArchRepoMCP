@@ -194,7 +194,11 @@ def _resolve_entity_path(
             "Entity path could not be resolved",
             details={"path": entity_path},
         ) from exc
-    if candidate.is_symlink() or not absolute.is_relative_to(context.root) or not absolute.is_file():
+    if (
+        candidate.is_symlink()
+        or not absolute.is_relative_to(context.root)
+        or not absolute.is_file()
+    ):
         raise ArchRepoError(
             ErrorCode.PERMISSION_DENIED,
             "Entity path is not a confined regular file",
@@ -210,4 +214,3 @@ def _record(root: Path, entity: EntityDefinition, path: Path) -> EntityRecord:
         format=entity.files.format.value,
         size_bytes=path.stat().st_size,
     )
-

@@ -12,7 +12,6 @@ from typing import Any
 import yaml
 
 from arch_repo_mcp.dsl import (
-    EntityDefinition,
     FileFormat,
     RepositoryDeclaration,
     ValidationIssue,
@@ -387,4 +386,3 @@ def _report(
         entity_counts={name: counts[name] for name in sorted(counts)},
         issues=ordered_issues,
     )
-

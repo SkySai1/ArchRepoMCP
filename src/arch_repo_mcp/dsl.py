@@ -167,9 +167,7 @@ def _is_safe_relative_path(value: str, *, allow_root: bool) -> bool:
     path = PurePosixPath(value)
     if path.is_absolute() or ".." in path.parts:
         return False
-    if not allow_root and path == PurePosixPath("."):
-        return False
-    return True
+    return allow_root or path != PurePosixPath(".")
 
 
 def _parse_selector(
@@ -459,4 +457,3 @@ def _raise_dsl_error(source: str, issues: list[ValidationIssue]) -> None:
         f"DSL declaration is invalid: {source}",
         details={"issues": [issue.as_dict() for issue in ordered_issues]},
     )
-
