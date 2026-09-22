@@ -22,9 +22,9 @@
 
 - [x] Удалить отдельный управляющий repository: каждый architecture repository содержит
   собственные DSL-декларацию и templates и является атомарным.
-- [x] Добавить встроенный default DSL bundle из `specs/dsl/architecture.yaml` для создания
-  нового самодостаточного repository без внешней декларации.
-- [x] Настроить workspace через stdio-аргумент, process environment или `.env`; все MCP repository paths разрешаются внутри настроенного workspace.
+- [x] Добавить встроенный default DSL bundle из `specs/dsl/architecture.yaml` как полный пример
+  для агента; создание требует явно переданных декларации и templates.
+- [x] Убрать workspace из environment: абсолютный target передаёт агент; индекс UUID хранится в `~/.config/arch-repo-mcp/repositories.json`.
 - [x] Добавить MCP-инструмент `repository_describe`, позволяющий AI-агенту получить полное
   описание модели явно выбранного repository из его локальных DSL и templates.
 - [x] Для каждой DSL entity возвращать:
@@ -40,8 +40,8 @@
 - [x] Обеспечить возможность AI-агенту перед обработкой исходных документов получить модель
   выбранного repository через MCP и использовать её как единственный источник правил
   классификации и создания entities.
-- [x] Добавить `repository_list`, перечисляющий все атомарные repositories без сравнения их
-  моделей и без неявного выбора; entity-tools требуют выбранный `repository_path`.
+- [x] Добавить `repository_list`, перечисляющий индексированные repositories без сравнения их
+  моделей и без неявного выбора; entity-tools требуют выбранный `repository_id`.
 - [x] Добавить contract tests для нового MCP-инструмента и проверку соответствия возвращаемого описания фактической DSL-декларации и templates.
 - [x] Добавить integration test сценария: исходное техническое задание → анализ AI-агентом → классификация информации по entity types → создание файлов через entity_create / entity_update согласно DSL и templates.
 - [x] Добавить instance-level связи в front matter (`relations[].entity` + `files[]`) и MCP-инструмент `entity_read_related`; DSL при этом содержит только допустимые entity types, а отсутствующий target возвращается как валидная связь со статусом `missing`.
@@ -83,3 +83,12 @@
 - [ ] [OPTIONAL] Pull/Merge Request, review и approval workflow.
 - [ ] [OPTIONAL] CI validation, Actions и protected branch policies.
 - [ ] [OPTIONAL] TLS certificate pinning поверх системной проверки сертификатов.
+
+## Создание и индексирование (MCP 0.5)
+
+- [x] Двухэтапный `repository_create`: справка с пресетами/связями и приём текстового DSL bundle.
+- [x] Полная проверка bundle до создания конечного каталога; отсутствие неявного default preset.
+- [x] Выбор существующего repository по UUID во всех MCP entity/Git/sync tools.
+- [x] Постоянный атомарный JSON-индекс с блокировкой, `repository_unindex` и `repository_reindex`.
+- [x] Регистрация клонированного repository, диагностика и восстановление при ошибке записи индекса.
+- [x] Lifecycle/contract regression tests и инструкции миграции для AI-агента и Goose.

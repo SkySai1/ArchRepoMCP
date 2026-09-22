@@ -20,6 +20,7 @@ from arch_repo_mcp.dsl import (
     RepositoryDeclaration,
     ValidationIssue,
     load_declaration,
+    parse_declaration,
 )
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
 from arch_repo_mcp.relation_model import parse_relation_groups
@@ -68,16 +69,49 @@ def create_repository(
 ) -> RepositoryContext:
     """Create and validate a local Git repository from a declaration bundle."""
 
-    target = _resolve_new_repository_target(target_path)
-    relative_declaration = _validate_relative_file_path(
-        declaration_path, label="declaration"
-    )
     source_file = _resolve_declaration_source(
         DEFAULT_PRESET_DECLARATION if declaration_source is None else declaration_source
     )
     declaration = load_declaration(source_file)
-    source_root = source_file.parent
-    templates = _resolve_source_templates(source_root, declaration)
+    sources = _resolve_source_templates(source_file.parent, declaration)
+    return create_repository_from_content(
+        target_path,
+        source_file.read_text(encoding="utf-8"),
+        {path.as_posix(): source.read_text(encoding="utf-8") for path, source in sources.items()},
+        declaration_path,
+        initial_branch,
+    )
+
+
+def create_repository_from_content(
+    target_path: str | Path,
+    architecture_yaml: str,
+    template_contents: dict[str, str],
+    declaration_path: str = DEFAULT_DECLARATION_PATH,
+    initial_branch: str = "main",
+) -> RepositoryContext:
+    """Validate an explicit agent-supplied bundle before installing its repository."""
+
+    target = _resolve_new_repository_target(target_path)
+    relative_declaration = _validate_relative_file_path(declaration_path, label="declaration")
+    declaration = parse_declaration(architecture_yaml)
+    templates = {
+        _validate_relative_file_path(path, label="template"): content
+        for path, content in template_contents.items()
+    }
+    expected = {entity.files.template for entity in declaration.entities}
+    if set(templates) != expected or len(templates) != len(template_contents):
+        raise ArchRepoError(
+            ErrorCode.VALIDATION_ERROR,
+            "Supply exactly the templates declared in architecture.yaml",
+            details={
+                "missing": sorted(path.as_posix() for path in expected - templates.keys()),
+                "unexpected": sorted(path.as_posix() for path in templates.keys() - expected),
+            },
+        )
+    for entity in declaration.entities:
+        if entity.files.path.mode is MatchMode.EXACT and entity.files.path.value != ".":
+            _validate_relative_file_path(entity.files.path.value, label="entity directory")
 
     if relative_declaration in templates:
         raise ArchRepoError(
@@ -93,12 +127,19 @@ def create_repository(
     try:
         destination = staging.joinpath(*relative_declaration.parts)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source_file, destination)
+        destination.write_text(architecture_yaml, encoding="utf-8")
 
-        for template_path, template_source in templates.items():
+        for template_path, template_content in templates.items():
             template_destination = staging.joinpath(*template_path.parts)
             template_destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(template_source, template_destination)
+            template_destination.write_text(template_content, encoding="utf-8")
+
+        report = _validate_loaded_repository(staging, relative_declaration, declaration)
+        if not report.valid:
+            raise ArchRepoError(
+                ErrorCode.VALIDATION_ERROR, "Repository bundle did not pass validation",
+                details=report.as_dict(),
+            )
 
         for entity in declaration.entities:
             if entity.files.path.mode is MatchMode.EXACT:
@@ -388,7 +429,11 @@ def _validate_relative_file_path(relative_path: str, *, label: str) -> PurePosix
             f"{label.capitalize()} path must be a repository-relative POSIX path",
         )
     pure_path = PurePosixPath(relative_path)
-    if pure_path.is_absolute() or ".." in pure_path.parts or pure_path == PurePosixPath("."):
+    if (
+        pure_path.is_absolute() or ".." in pure_path.parts or pure_path == PurePosixPath(".")
+        or any(part.casefold() == ".git" or ":" in part for part in pure_path.parts)
+        or "\0" in relative_path
+    ):
         raise ArchRepoError(
             ErrorCode.INVALID_REPOSITORY,
             f"{label.capitalize()} path escapes the repository",

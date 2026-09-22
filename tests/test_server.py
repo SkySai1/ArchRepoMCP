@@ -14,6 +14,8 @@ def test_expected_mcp_tools_are_registered() -> None:
         "branch_switch",
         "remote_configure",
         "repository_create",
+        "repository_reindex",
+        "repository_unindex",
         "repository_branches",
         "repository_clone",
         "repository_diff",
@@ -46,8 +48,8 @@ def test_mcp_tool_returns_normalized_domain_error(tmp_path: Path) -> None:
     assert result == {
         "ok": False,
         "error": {
-            "code": "INVALID_REPOSITORY",
-            "message": "Path is not inside a Git repository",
-            "details": {"path": str(tmp_path.resolve())},
+            "code": "VALIDATION_ERROR",
+            "message": "repository_id must be a UUID",
+            "details": {},
         },
     }

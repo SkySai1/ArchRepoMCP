@@ -20,10 +20,11 @@ offline.
 - проверка templates, конфликтов file matching и форматов файлов;
 - безопасное создание repository из декларации и её template bundle;
 - атомарный repository, содержащий собственные `architecture.yaml` и templates;
-- встроенный default preset для создания нового самодостаточного repository;
+- справка по DSL, таблицы пресетов и связей, полные примеры до создания repository;
 - описание модели выбранного repository через `repository_describe` и явный выбор через
   `repository_list`;
-- единый локальный workspace, настраиваемый через stdio, environment или `.env`;
+- постоянный JSON-индекс в `~/.config/arch-repo-mcp/` и выбор repository по UUID;
+- удаление записи из индекса без удаления файлов и повторная индексация после validation;
 - Entity Service: `list`, `read`, `search`, `create`, `update`, `delete`;
 - rollback entity mutations, не прошедших полную repository validation;
 - Local Git Service: `status`, `diff`, `history`, `commit`, branches и remotes;
@@ -37,7 +38,8 @@ offline.
 ```text
 MCP tools
    │
-   ├── Repository Catalog ─── list / describe
+   ├── Repository Registry ── UUID / list / reindex / unindex
+   ├── Repository Catalog ─── creation guide / describe
    ├── Repository Service ─── create / open / validate
    ├── Entity Service ────── list / read / search / create / update / delete
    ├── Local Git Service ─── status / diff / history / commit / branches / remotes
@@ -96,10 +98,7 @@ python -m arch_repo_mcp.server
 {
   "mcpServers": {
     "arch-repo": {
-      "command": "arch-repo-mcp",
-      "env": {
-        "ARCH_REPO_MCP_WORKSPACE": "D:\\ArchitectureRepositories"
-      }
+      "command": "arch-repo-mcp"
     }
   }
 }
@@ -108,28 +107,33 @@ python -m arch_repo_mcp.server
 Конкретный формат файла конфигурации зависит от MCP host. Команда должна запускаться в
 окружении, где установлен пакет `arch-repo-mcp`.
 
-### Workspace и `.env`
+### Индекс и пути репозиториев
 
-`ARCH_REPO_MCP_WORKSPACE` задаёт локальную директорию, внутри которой находятся все атомарные
-repositories. Особого управляющего repository в workspace нет.
+Сервер создаёт `~/.config/arch-repo-mcp/repositories.json` при запуске или первом обращении
+к индексу. В нём хранятся UUID и канонические абсолютные пути:
 
-Те же значения можно сохранить в `.env` текущей директории процесса:
-
-```dotenv
-ARCH_REPO_MCP_WORKSPACE=D:/ArchitectureRepositories
+```json
+{
+  "version": 1,
+  "repositories": [
+    {
+      "repository_id": "9ac62b0d-1dbd-4e78-b02f-b9c34a1d2e70",
+      "repository_path": "/Users/you/ArchitectureRepositories/payments"
+    }
+  ]
+}
 ```
 
-Другой env-файл выбирается через `ARCH_REPO_MCP_ENV_FILE`. Для `repository_list` workspace
-можно передать непосредственно по stdio в аргументах `workspace_path` и `env_file`.
-Приоритет: stdio-аргумент, process environment, затем `.env`.
+Репозитории могут находиться в разных каталогах. Конечный абсолютный `target_path` передаёт
+агент при создании или клонировании. Родительская директория должна существовать, target —
+отсутствовать. Относительные пути и `~` в аргументе не принимаются: агент передаёт полный путь.
+Во всех дальнейших операциях агент передаёт `repository_id` из ответа или `repository_list`.
 
-Если workspace настроен, относительные `repository_path` и `target_path` разрешаются внутри
-него, а выход за его границы отклоняется.
-
-При обновлении с предыдущей модели удалите `ARCH_REPO_MCP_GOVERNMENT_REPOSITORY` из окружения
-и конфигурации MCP host. Сервер больше не создаёт, не выделяет и не удаляет управляющий
-repository. Существующий каталог с таким назначением останется на диске и будет восприниматься
-как обычный architecture repository, если содержит валидные локальные DSL и templates.
+При обновлении удалите `ARCH_REPO_MCP_WORKSPACE`, `ARCH_REPO_MCP_ENV_FILE` и старую переменную
+`ARCH_REPO_MCP_GOVERNMENT_REPOSITORY` из настроек MCP host. Путь repository больше не читается
+из переменных окружения или `.env`. Существующие файлы не перемещаются; каждый прежний repository
+нужно явно зарегистрировать через `repository_reindex(repository_path="/absolute/path")`.
+Вызовы старого API с `repository_path` вместо UUID необходимо обновить.
 
 ## Запуск в Goose на macOS
 
@@ -142,7 +146,7 @@ brew install --cask block-goose
 ```
 
 Настройте LLM provider при первом запуске Goose или позднее через `goose configure` в CLI либо
-`Settings` → `Models` в Desktop. Затем подготовьте ArchRepoMCP и локальный workspace. Во всех
+`Settings` → `Models` в Desktop. Затем подготовьте ArchRepoMCP и родительскую директорию для репозиториев. Во всех
 следующих примерах замените `/Users/you/...` своими абсолютными путями:
 
 ```bash
@@ -153,8 +157,7 @@ mkdir -p /Users/you/ArchitectureRepositories
 ```
 
 Используйте абсолютный путь к `.venv/bin/arch-repo-mcp`: Goose Desktop может не наследовать
-`PATH` интерактивной shell. Переменные окружения также лучше передать в настройках extension,
-поскольку рабочая директория процесса Goose не обязана совпадать с каталогом проекта.
+`PATH` интерактивной shell. Путь к repository в настройках extension не требуется.
 
 ### Goose CLI
 
@@ -168,9 +171,7 @@ goose configure
 
 - name: `ArchRepoMCP`;
 - command: `/Users/you/src/ArchRepoMCP/.venv/bin/arch-repo-mcp`;
-- timeout: `300`;
-- environment variable `ARCH_REPO_MCP_WORKSPACE`:
-  `/Users/you/ArchitectureRepositories`.
+- timeout: `300`.
 
 После добавления запустите обычную сессию:
 
@@ -182,7 +183,7 @@ goose session
 
 ```bash
 goose session --with-extension \
-  "ARCH_REPO_MCP_WORKSPACE=/Users/you/ArchitectureRepositories /Users/you/src/ArchRepoMCP/.venv/bin/arch-repo-mcp"
+  "/Users/you/src/ArchRepoMCP/.venv/bin/arch-repo-mcp"
 ```
 
 ### Goose Desktop (GUI)
@@ -191,15 +192,14 @@ goose session --with-extension \
 2. Нажмите `Add custom extension`.
 3. Выберите type `Standard IO`, задайте ID `arch-repo-mcp`, name `ArchRepoMCP` и command
    `/Users/you/src/ArchRepoMCP/.venv/bin/arch-repo-mcp`.
-4. Добавьте через отдельную кнопку `Add` переменную `ARCH_REPO_MCP_WORKSPACE` из
-   CLI-инструкции выше и установите timeout `300`.
+4. Установите timeout `300`. Путь repository будет передан самим агентом в MCP-вызове.
 5. Нажмите `Add`, убедитесь, что extension включён, и начните новую сессию.
 
-Для проверки подключения попросите Goose: `Вызови repository_list`. Если список пуст,
-попросите создать repository через `repository_create` с `target_path="example"`, после чего
-вызвать `repository_describe` с `repository_path="example"`. Новый repository получит
-собственные DSL-декларацию и templates из default preset. Конфигурация CLI и Desktop общая и
-хранится Goose в `~/.config/goose/config.yaml`.
+Для проверки подключения попросите Goose: `Вызови repository_create без аргументов и покажи
+доступные пресеты и связи`. Затем попросите составить DSL и templates под задачу и создать
+repository по полному пути `/Users/you/ArchitectureRepositories/example`. Агент передаст тексты
+в MCP, получит UUID и вызовет `repository_describe(repository_id="полученный UUID")`.
+Конфигурация CLI и Desktop общая и хранится Goose в `~/.config/goose/config.yaml`.
 
 Актуальные названия пунктов интерфейса и варианты установки приведены в официальной
 [инструкции по установке Goose](https://goose-docs.ai/docs/getting-started/installation/) и
@@ -210,8 +210,10 @@ goose session --with-extension \
 | Tool | Назначение |
 | --- | --- |
 | `repository_describe` | Получить DSL, entity semantics и содержимое templates выбранного repository |
-| `repository_list` | Получить атомарные repositories для явного выбора `repository_path` |
-| `repository_create` | Создать самодостаточный Git repository из default или указанного DSL bundle |
+| `repository_list` | Получить индексированные repositories для явного выбора UUID |
+| `repository_reindex` | Проверить существующий repository по абсолютному пути и зарегистрировать UUID |
+| `repository_unindex` | Удалить UUID из индекса, сохранив физический repository |
+| `repository_create` | Получить справку или создать repository из явно переданных DSL и templates |
 | `repository_open` | Открыть и полностью проверить локальный architecture repository |
 | `repository_validate` | Получить детальный validation report без изменения repository |
 | `repository_status` | Получить структурированный локальный Git status |
@@ -235,8 +237,9 @@ goose session --with-extension \
 | `entity_update` | Локально заменить entity с validation и rollback |
 | `entity_delete` | Локально удалить entity с validation и rollback |
 
-Все операции над существующим repository принимают `repository_path`; `repository_create`
-и `repository_clone` вместо него принимают новый `target_path`. Repository и Entity tools,
+Все операции над индексированным repository принимают обязательный `repository_id` (UUID).
+`repository_reindex` принимает абсолютный `repository_path` для регистрации существующего
+каталога; `repository_create` и `repository_clone` принимают новый абсолютный `target_path`. Repository и Entity tools,
 которым требуется декларация, также принимают необязательный `declaration_path` с явно
 документированным значением по умолчанию `architecture.yaml`. Git inspection отделён от
 DSL validation и остаётся доступен для диагностики невалидного working tree. Ответ имеет
@@ -264,32 +267,83 @@ DSL validation и остаётся доступен для диагностик�
 
 ### Сценарий AI-агента
 
-1. Вызвать `repository_list` и явно выбрать один валидный `repository_path`. Если repository
-   ещё нет, создать его через `repository_create`; без `declaration_source` будет использован
-   встроенный default preset.
-2. Вызвать `repository_describe` для выбранного repository. Использовать возвращённые
-   `description`, `relations`, `path_rule`, `filename_rule`, `format` и `template_content`
-   только из этого repository как источник правил классификации исходного текста.
-3. Явно передавать выбранный `repository_path` во все entity tools и не смешивать модели
-   разных repositories в одной операции.
-4. Для каждого результата классификации вызвать `entity_create`, затем `entity_update` с
-   полным UTF-8 содержимым по локальному шаблону.
-5. Отдельно проверить изменения и при необходимости явно выполнить commit/publish.
+1. Для нового repository вызвать `repository_create()` без аргументов. Ответ `phase=guide`
+   содержит нормативные таблицы DSL, таблицы пресетов и направлений связей, инструкции,
+   полные примеры `minimal` и `default` с содержимым каждого шаблона.
+2. Составить `architecture.yaml` и templates под запрос пользователя. Пресеты служат примерами:
+   имена сущностей, семантические описания, пути и связи задаёт агент согласно DSL.
+3. Передать комплект через тот же `repository_create` с `target_path`, `architecture_yaml`,
+   `templates`. Читать или создавать исходные файлы на диске сервера агенту не требуется.
+4. Получить `repository_id`. Для существующих repositories взять UUID через `repository_list`,
+   а для ещё не индексированного каталога — через `repository_reindex`.
+5. Вызвать `repository_describe(repository_id=...)`. Использовать именно его `description`,
+   `relations`, `path_rule`, `filename_rule`, `format`, `template_content` при классификации текста.
+6. Передавать этот UUID в `entity_create`, затем в `entity_update` с полным UTF-8 содержимым.
+7. Проверить изменения. Commit и publish выполняются отдельными явными командами.
 
 ### Создание repository
 
-`repository_create` принимает отсутствующий `target_path` и необязательный путь к исходной
-DSL-декларации `declaration_source`. Если источник не передан, используется встроенный default
-preset. Для явного источника все указанные декларацией templates должны находиться рядом с ней
-по repository-relative путям. Сначала bundle полностью проверяется, затем во временном
-staging-каталоге выполняется `git init`, и только валидный результат переносится в target.
+Первый MCP-вызов: `repository_create` с аргументами `{}`. Второй вызов передаёт **содержимое**
+файлов. Например, для минимальной модели записей:
 
-После создания `architecture.yaml` и все объявленные templates копируются внутрь target.
-Дальнейшие `repository_describe`, validation и entity-операции читают только локальную модель
-этого repository; изменение default preset или DSL другого repository на него не влияет.
+```json
+{
+  "target_path": "/Users/you/ArchitectureRepositories/notes",
+  "architecture_yaml": "declaration:\n  kind: architecture_repository\n  version: v2\nentities:\n  - name: note\n    description: Архитектурная заметка\n    files:\n      path: {match: exact, value: notes}\n      filename: {match: regex, value: '^N-[0-9]+\\.md$'}\n      format: markdown\n      template: templates/note.md\n",
+  "templates": {
+    "templates/note.md": "# Заметка\n\nОписание решения.\n"
+  },
+  "initial_branch": "main"
+}
+```
 
-Начальная ветка задаётся параметром `initial_branch` с документированным значением по
-умолчанию `main`. Операция не создаёт commit и не настраивает remote.
+Пример ответа:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "phase": "created",
+    "repository_id": "9ac62b0d-1dbd-4e78-b02f-b9c34a1d2e70",
+    "repository_root": "/Users/you/ArchitectureRepositories/notes",
+    "declaration_path": "architecture.yaml",
+    "declaration": {"kind": "architecture_repository", "version": "v2"},
+    "entities": ["note"]
+  }
+}
+```
+
+Все три аргумента `target_path`, `architecture_yaml`, `templates` передаются вместе. Неполный
+комплект вызывает `VALIDATION_ERROR`; неявного выбора default preset нет. `templates` должен
+содержать ровно объявленные шаблоны. При исключении типа из примера обновляются и DSL relations,
+и ссылки в шаблонах. Содержимое и направления связей проверяются до установки результата в target.
+
+MCP создаёт `architecture.yaml`, templates и каталоги точных `path`-селекторов. Для regex
+невозможно однозначно вывести конкретное имя каталога: такой путь позже указывает агент в
+`entity_create`. Невалидный bundle не оставляет target или запись индекса. Существующий target
+не заменяется. Начальная ветка — `main`, если явно не передан другой `initial_branch`.
+Commit и remote автоматически не создаются. Каждый repository хранит собственную модель.
+
+### Удаление из индекса и повторная индексация
+
+`repository_unindex(repository_id=...)` удаляет только запись, сохраняя все файлы и Git history.
+Это работает и для отсутствующего или невалидного каталога. Старый UUID после удаления даёт
+`NOT_FOUND`.
+
+`repository_reindex(repository_path="/absolute/path")` проверяет, что путь — точный Git root,
+а DSL, templates и сущности валидны. Для уже индексированного пути сохраняет UUID, иначе
+создаёт новый. Нестандартный путь декларации можно передать через `declaration_path`; его
+нужно затем явно передавать в соответствующие операции, поскольку индекс хранит только UUID
+и путь repository. При переносе каталога зарегистрируйте новый путь и явно удалите старую запись.
+
+`repository_list` возвращает сохранённые записи, включая устаревшие; каталогов не сканирует.
+UUID сохраняется между запусками сервера. Записи индекса обновляются атомарно под блокировкой;
+повреждённый JSON вызывает ошибку без перезаписи. Если после создания/клонирования не удалось
+записать индекс, каталог сохраняется, а ошибка содержит его путь для `repository_reindex`.
+Git inspection доступен по UUID даже при ошибке DSL для диагностики.
+
+Нормативные аргументы и результаты: `specs/contracts/mcp/MCP_TOOLS.yaml`.
+Правила жизненного цикла: `specs/contracts/mcp/REPOSITORY_LIFECYCLE.md`.
 
 ### Изменение entities
 
@@ -335,7 +389,7 @@ branch не проходит validation, MCP возвращается на ис�
 Remote-операции никогда не запускаются другими tools неявно и не запрашивают credentials
 интерактивно. `repository_clone` клонирует во временный каталог рядом с `target_path`,
 отключает рекурсивное получение submodules, выполняет полную DSL/repository validation и
-только после успеха перемещает результат в target. Невалидный clone не оставляет частично
+только после успеха перемещает результат в target и индексирует его с UUID. Невалидный clone не оставляет частично
 созданный repository по целевому пути.
 
 `repository_fetch` требует явное имя настроенного remote и только обновляет remote-tracking
@@ -362,6 +416,7 @@ declaration:
 
 entities:
   - name: fact
+    description: Проверенный архитектурный факт
     files:
       path:
         match: exact
@@ -388,7 +443,9 @@ python -m pytest
 python -m ruff check .
 ```
 
-Тесты создают временные локальные Git repositories. Remote sync проверяется через локальные
+Тесты создают временные локальные Git repositories и изолируют пользовательский JSON-индекс.
+Проверяются двухэтапное создание, пользовательские DSL, UUID, unindex/reindex, повреждённый
+индекс, параллельные записи, опасные пути, ошибки шаблонов и безопасное восстановление. Remote sync проверяется через локальные
 bare repositories и `file://` transport, поэтому Forgejo и доступ к сети не требуются.
 
 ## Forgejo и credentials

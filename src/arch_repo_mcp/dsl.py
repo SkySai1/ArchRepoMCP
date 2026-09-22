@@ -166,7 +166,10 @@ def _is_safe_relative_path(value: str, *, allow_root: bool) -> bool:
     if not value or "\\" in value:
         return False
     path = PurePosixPath(value)
-    if path.is_absolute() or ".." in path.parts:
+    if (
+        path.is_absolute() or ".." in path.parts or "\0" in value
+        or any(part.casefold() == ".git" or ":" in part for part in path.parts)
+    ):
         return False
     return allow_root or path != PurePosixPath(".")
 

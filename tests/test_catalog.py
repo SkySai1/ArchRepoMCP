@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from arch_repo_mcp.catalog import describe_repository, list_repositories
+from arch_repo_mcp.catalog import describe_repository
 from arch_repo_mcp.dsl import load_declaration
 from arch_repo_mcp.entities import (
     create_entity,
@@ -10,10 +10,10 @@ from arch_repo_mcp.entities import (
     read_related_entities,
     update_entity,
 )
+from arch_repo_mcp.registry import RepositoryRegistry
 from arch_repo_mcp.repository import create_repository
 from arch_repo_mcp.server import entity_list as mcp_entity_list
 from arch_repo_mcp.server import repository_open
-from arch_repo_mcp.workspace import WORKSPACE_ENV, load_workspace_config
 
 PROJECT_ROOT = Path(__file__).parents[1]
 NORMATIVE_DSL = PROJECT_ROOT / "specs" / "dsl"
@@ -30,37 +30,6 @@ def test_packaged_default_preset_matches_normative_dsl() -> None:
         assert (PACKAGED_DSL / relative).read_text(encoding="utf-8") == (
             NORMATIVE_DSL / relative
         ).read_text(encoding="utf-8")
-
-
-def test_workspace_config_precedence_is_stdio_then_environment_then_dotenv(
-    tmp_path: Path,
-) -> None:
-    file_workspace = tmp_path / "from-file"
-    environment_workspace = tmp_path / "from-environment"
-    stdio_workspace = tmp_path / "from-stdio"
-    env_file = tmp_path / ".env"
-    env_file.write_text(f"{WORKSPACE_ENV}={file_workspace}\n", encoding="utf-8")
-
-    file_config = load_workspace_config(
-        env_file=env_file,
-        environment={},
-        create_workspace=True,
-    )
-    environment_config = load_workspace_config(
-        env_file=env_file,
-        environment={WORKSPACE_ENV: str(environment_workspace)},
-        create_workspace=True,
-    )
-    config = load_workspace_config(
-        stdio_workspace,
-        env_file,
-        environment={WORKSPACE_ENV: str(environment_workspace)},
-        create_workspace=True,
-    )
-
-    assert config.root == stdio_workspace.resolve()
-    assert file_config.root == file_workspace.resolve()
-    assert environment_config.root == environment_workspace.resolve()
 
 
 def test_default_repository_is_atomic_and_describes_its_own_model(tmp_path: Path) -> None:
@@ -108,22 +77,20 @@ def test_repository_list_returns_every_atomic_repository(tmp_path: Path) -> None
     create_repository(first)
     create_repository(second, NORMATIVE_DSL / "architecture.yaml")
 
-    result = list_repositories(workspace)
+    registry = RepositoryRegistry()
+    registry.reindex(str(first))
+    registry.reindex(str(second))
+    result = registry.list()
 
-    assert result["workspace_root"] == str(workspace.resolve())
-    assert [item["name"] for item in result["repositories"]] == [
+    assert result["index_path"] == str(registry.path)
+    assert [Path(item["repository_path"]).name for item in result["repositories"]] == [
         "payments",
         "warehouse",
     ]
-    assert all(item["valid"] for item in result["repositories"])
     assert all(
         set(item) == {
-            "name",
+            "repository_id",
             "repository_path",
-            "declaration_path",
-            "valid",
-            "entity_counts",
-            "issues",
         }
         for item in result["repositories"]
     )
@@ -193,9 +160,7 @@ relations:
 """,
     )
 
-    selected_repository = list_repositories(workspace)["repositories"][0][
-        "repository_path"
-    ]
+    selected_repository = RepositoryRegistry().reindex(str(working))["repository_path"]
     assert read_entity(
         selected_repository, "requirement", "requirements/R-0001.md"
     )["content"].endswith("Система обязана хранить аудит 365 дней.\n")
@@ -228,30 +193,25 @@ relations:
     }
 
 
-def test_stdio_tools_resolve_relative_repository_from_environment(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    workspace = tmp_path / "repositories"
-    workspace.mkdir()
-    create_repository(workspace / "selected")
-    monkeypatch.setenv(WORKSPACE_ENV, str(workspace))
+def test_stdio_tools_ignore_legacy_workspace_environment(tmp_path: Path, monkeypatch) -> None:
+    repository = tmp_path / "selected"
+    create_repository(repository)
+    entry = RepositoryRegistry().reindex(str(repository))
+    monkeypatch.setenv("ARCH_REPO_MCP_WORKSPACE", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("ARCH_REPO_MCP_ENV_FILE", str(tmp_path / "missing.env"))
 
-    result = repository_open("selected")
+    result = repository_open(entry["repository_id"])
 
     assert result["ok"] is True
-    assert result["result"]["repository_root"] == str((workspace / "selected").resolve())
+    assert result["result"]["repository_root"] == str(repository.resolve())
+    assert repository_open("selected")["error"]["code"] == "VALIDATION_ERROR"
 
 
-def test_entity_tools_accept_any_selected_atomic_repository(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    workspace = tmp_path / "repositories"
-    workspace.mkdir()
-    create_repository(workspace / "selected")
-    monkeypatch.setenv(WORKSPACE_ENV, str(workspace))
+def test_entity_tools_accept_selected_repository_uuid(tmp_path: Path) -> None:
+    repository = tmp_path / "selected"
+    create_repository(repository)
+    entry = RepositoryRegistry().reindex(str(repository))
 
-    result = mcp_entity_list("selected", "fact")
+    result = mcp_entity_list(entry["repository_id"], "fact")
 
     assert result == {"ok": True, "result": []}

@@ -8,7 +8,8 @@ from typing import Any, TypeVar
 from mcp.server import MCPServer
 
 from arch_repo_mcp import __version__
-from arch_repo_mcp.catalog import describe_repository, list_repositories
+from arch_repo_mcp.catalog import describe_repository
+from arch_repo_mcp.creation_guide import creation_guide
 from arch_repo_mcp.entities import (
     create_entity,
     delete_entity,
@@ -36,6 +37,7 @@ from arch_repo_mcp.local_git import (
 from arch_repo_mcp.local_git import (
     repository_status as local_repository_status,
 )
+from arch_repo_mcp.registry import RepositoryRegistry, absolute_repository_path
 from arch_repo_mcp.remote_sync import (
     clone_repository,
     fetch_repository,
@@ -44,11 +46,10 @@ from arch_repo_mcp.remote_sync import (
 )
 from arch_repo_mcp.repository import (
     RepositoryContext,
-    create_repository,
+    create_repository_from_content,
     open_repository,
     validate_repository,
 )
-from arch_repo_mcp.workspace import resolve_repository_argument
 
 ResultT = TypeVar("ResultT")
 
@@ -56,12 +57,16 @@ mcp = MCPServer(
     "ArchRepoMCP",
     description="Local-first management of DSL-defined architecture Git repositories",
     instructions=(
-        "Call repository_list, select one repository_path, and call repository_describe to "
+        "Call repository_create without arguments for DSL presets, relations and examples. "
+        "Submit target_path, architecture_yaml and templates to repository_create to create. "
+        "Call repository_list, select one repository_id UUID, and call repository_describe to "
         "obtain that repository's authoritative DSL and templates before entity operations. "
         "Every repository is self-contained. Network access occurs only through the "
         "explicit repository_clone, repository_fetch, repository_pull, and "
         "repository_publish tools; no tool performs an implicit pull, push, or provider API "
-        "request. Paths must identify local Git repositories and repository-relative files."
+        "request. Existing repository operations require UUID, never a filesystem path. "
+        "Use repository_reindex to validate and register existing repositories, and "
+        "repository_unindex to remove only an index entry."
     ),
     version=__version__,
 )
@@ -89,101 +94,141 @@ def _repository_result(context: RepositoryContext) -> dict[str, Any]:
     }
 
 
-def _managed_path(path: str) -> str:
-    """Resolve relative paths against the configured workspace when one is configured."""
+def _repository_path(repository_id: str) -> str:
+    return RepositoryRegistry().resolve(repository_id)
 
-    return str(resolve_repository_argument(path))
+
+def _index_new_repository(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    registry = RepositoryRegistry()
+    registry.list()  # Check index access and integrity before creating a repository.
+    result = operation()
+    try:
+        entry = registry.reindex(result["repository_root"], result["declaration_path"])
+    except ArchRepoError as exc:
+        raise ArchRepoError(
+            exc.code,
+            "Repository was created but indexing failed; call repository_reindex to recover",
+            details={"repository_path": result["repository_root"]},
+        ) from exc
+    return {**result, "repository_id": entry["repository_id"]}
 
 
 @mcp.tool()
 def repository_describe(
-    repository_path: str,
+    repository_id: str,
     declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
     """Return the selected repository's authoritative DSL, templates, and workflow."""
 
     return _call(
         lambda: describe_repository(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             declaration_path,
         )
     )
 
 
 @mcp.tool()
-def repository_list(
-    workspace_path: str | None = None,
-    env_file: str | None = None,
-) -> dict[str, Any]:
-    """List atomic repositories so an agent can explicitly select a repository_path."""
+def repository_list() -> dict[str, Any]:
+    """List persistent repository UUIDs and absolute paths, including stale entries."""
 
-    return _call(
-        lambda: list_repositories(
-            workspace_path,
-            env_file,
-        )
-    )
+    return _call(lambda: RepositoryRegistry().list())
+
+
+@mcp.tool()
+def repository_unindex(repository_id: str) -> dict[str, Any]:
+    """Remove a UUID from the index without deleting or changing repository files."""
+
+    return _call(lambda: RepositoryRegistry().unindex(repository_id))
+
+
+@mcp.tool()
+def repository_reindex(
+    repository_path: str,
+    declaration_path: str = "architecture.yaml",
+) -> dict[str, Any]:
+    """Validate an existing absolute Git root and register it, preserving an existing UUID."""
+
+    return _call(lambda: RepositoryRegistry().reindex(repository_path, declaration_path))
 
 
 @mcp.tool()
 def repository_create(
-    target_path: str,
-    declaration_source: str | None = None,
-    declaration_path: str = "architecture.yaml",
+    target_path: str | None = None,
+    architecture_yaml: str | None = None,
+    templates: dict[str, str] | None = None,
     initial_branch: str = "main",
 ) -> dict[str, Any]:
-    """Create an atomic repository from a default or explicit DSL bundle."""
+    """Without arguments return DSL tables, relations, instructions and complete examples.
 
-    return _call(
-        lambda: _repository_result(
-            create_repository(
-                _managed_path(target_path),
-                declaration_source,
-                declaration_path,
-                initial_branch,
+    To create, explicitly submit all of target_path (absolute), architecture_yaml (text)
+    and templates (relative path to content). Validate and return the indexed repository UUID.
+    No implicit preset, commit or push.
+    """
+
+    def execute() -> dict[str, Any]:
+        if target_path is None and architecture_yaml is None and templates is None:
+            return creation_guide()
+        if target_path is None or architecture_yaml is None or templates is None:
+            raise ArchRepoError(
+                ErrorCode.VALIDATION_ERROR,
+                "Supply target_path, architecture_yaml and templates together; "
+                "call repository_create without arguments for guidance",
+            )
+        path = absolute_repository_path(target_path)
+        result = _index_new_repository(
+            lambda: _repository_result(
+                create_repository_from_content(
+                    path,
+                    architecture_yaml,
+                    templates,
+                    initial_branch=initial_branch,
+                )
             )
         )
-    )
+        return {"phase": "created", **result}
+
+    return _call(execute)
 
 
 @mcp.tool()
 def repository_open(
-    repository_path: str,
+    repository_id: str,
     declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
     """Open and fully validate a local architecture Git repository without network access."""
 
     return _call(
         lambda: _repository_result(
-            open_repository(_managed_path(repository_path), declaration_path)
+            open_repository(_repository_path(repository_id), declaration_path)
         )
     )
 
 
 @mcp.tool()
 def repository_validate(
-    repository_path: str,
+    repository_id: str,
     declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
     """Validate the DSL, templates, paths, matching rules, and local entity files."""
 
     return _call(
-        lambda: validate_repository(_managed_path(repository_path), declaration_path).as_dict()
+        lambda: validate_repository(_repository_path(repository_id), declaration_path).as_dict()
     )
 
 
 @mcp.tool()
 def repository_status(
-    repository_path: str,
+    repository_id: str,
 ) -> dict[str, Any]:
     """Return local Git status without fetch, pull, or other network operations."""
 
-    return _call(lambda: local_repository_status(_managed_path(repository_path)).as_dict())
+    return _call(lambda: local_repository_status(_repository_path(repository_id)).as_dict())
 
 
 @mcp.tool()
 def repository_diff(
-    repository_path: str,
+    repository_id: str,
     staged: bool = False,
     base_revision: str | None = None,
     target_revision: str | None = None,
@@ -193,7 +238,7 @@ def repository_diff(
     return _call(
         lambda: {
             "diff": local_repository_diff(
-                _managed_path(repository_path),
+                _repository_path(repository_id),
                 staged=staged,
                 base_revision=base_revision,
                 target_revision=target_revision,
@@ -204,20 +249,18 @@ def repository_diff(
 
 @mcp.tool()
 def repository_branches(
-    repository_path: str,
+    repository_id: str,
 ) -> dict[str, Any]:
     """List local branches without contacting a remote."""
 
     return _call(
-        lambda: [
-            branch.as_dict() for branch in list_branches(_managed_path(repository_path))
-        ]
+        lambda: [branch.as_dict() for branch in list_branches(_repository_path(repository_id))]
     )
 
 
 @mcp.tool()
 def branch_create(
-    repository_path: str,
+    repository_id: str,
     branch_name: str,
     start_point: str = "HEAD",
 ) -> dict[str, Any]:
@@ -225,7 +268,7 @@ def branch_create(
 
     return _call(
         lambda: create_branch(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             branch_name,
             start_point,
         ).as_dict()
@@ -234,7 +277,7 @@ def branch_create(
 
 @mcp.tool()
 def branch_switch(
-    repository_path: str,
+    repository_id: str,
     branch_name: str,
     declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
@@ -242,7 +285,7 @@ def branch_switch(
 
     return _call(
         lambda: switch_branch(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             branch_name,
             declaration_path,
         ).as_dict()
@@ -251,7 +294,7 @@ def branch_switch(
 
 @mcp.tool()
 def repository_commit(
-    repository_path: str,
+    repository_id: str,
     message: str,
     declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
@@ -259,7 +302,7 @@ def repository_commit(
 
     return _call(
         lambda: local_repository_commit(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             message,
             declaration_path,
         ).as_dict()
@@ -268,7 +311,7 @@ def repository_commit(
 
 @mcp.tool()
 def repository_history(
-    repository_path: str,
+    repository_id: str,
     max_count: int = 20,
     revision: str = "HEAD",
 ) -> dict[str, Any]:
@@ -278,7 +321,7 @@ def repository_history(
         lambda: [
             commit.as_dict()
             for commit in local_repository_history(
-                _managed_path(repository_path),
+                _repository_path(repository_id),
                 max_count=max_count,
                 revision=revision,
             )
@@ -287,17 +330,17 @@ def repository_history(
 
 
 @mcp.tool()
-def repository_remotes(repository_path: str) -> dict[str, Any]:
+def repository_remotes(repository_id: str) -> dict[str, Any]:
     """List local Git remotes while redacting credential-bearing URL components."""
 
     return _call(
-        lambda: [remote.as_dict() for remote in list_remotes(_managed_path(repository_path))]
+        lambda: [remote.as_dict() for remote in list_remotes(_repository_path(repository_id))]
     )
 
 
 @mcp.tool()
 def remote_configure(
-    repository_path: str,
+    repository_id: str,
     name: str,
     url: str,
     replace: bool = False,
@@ -306,7 +349,7 @@ def remote_configure(
 
     return _call(
         lambda: configure_remote(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             name,
             url,
             replace=replace,
@@ -325,19 +368,21 @@ def repository_clone(
     """Explicitly clone and validate a remote Git architecture repository."""
 
     return _call(
-        lambda: clone_repository(
-            remote_url,
-            _managed_path(target_path),
-            declaration_path,
-            branch=branch,
-            include_tags=include_tags,
-        ).as_dict()
+        lambda: _index_new_repository(
+            lambda: clone_repository(
+                remote_url,
+                str(absolute_repository_path(target_path)),
+                declaration_path,
+                branch=branch,
+                include_tags=include_tags,
+            ).as_dict()
+        )
     )
 
 
 @mcp.tool()
 def repository_fetch(
-    repository_path: str,
+    repository_id: str,
     remote: str,
     include_tags: bool = False,
     prune: bool = False,
@@ -346,7 +391,7 @@ def repository_fetch(
 
     return _call(
         lambda: fetch_repository(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             remote,
             include_tags=include_tags,
             prune=prune,
@@ -356,7 +401,7 @@ def repository_fetch(
 
 @mcp.tool()
 def repository_pull(
-    repository_path: str,
+    repository_id: str,
     remote: str,
     remote_branch: str,
     declaration_path: str = "architecture.yaml",
@@ -365,7 +410,7 @@ def repository_pull(
 
     return _call(
         lambda: pull_repository(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             remote,
             remote_branch,
             declaration_path,
@@ -375,7 +420,7 @@ def repository_pull(
 
 @mcp.tool()
 def repository_publish(
-    repository_path: str,
+    repository_id: str,
     remote: str,
     remote_branch: str,
     declaration_path: str = "architecture.yaml",
@@ -384,7 +429,7 @@ def repository_publish(
 
     return _call(
         lambda: publish_repository(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             remote,
             remote_branch,
             declaration_path,
@@ -394,7 +439,7 @@ def repository_publish(
 
 @mcp.tool()
 def entity_list(
-    repository_path: str,
+    repository_id: str,
     entity_name: str,
     declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
@@ -403,14 +448,16 @@ def entity_list(
     return _call(
         lambda: [
             item.as_dict()
-            for item in list_entities(_managed_path(repository_path), entity_name, declaration_path)
+            for item in list_entities(
+                _repository_path(repository_id), entity_name, declaration_path
+            )
         ]
     )
 
 
 @mcp.tool()
 def entity_create(
-    repository_path: str,
+    repository_id: str,
     entity_name: str,
     entity_path: str,
     declaration_path: str = "architecture.yaml",
@@ -419,7 +466,7 @@ def entity_create(
 
     return _call(
         lambda: create_entity(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             entity_name,
             entity_path,
             declaration_path,
@@ -429,7 +476,7 @@ def entity_create(
 
 @mcp.tool()
 def entity_read(
-    repository_path: str,
+    repository_id: str,
     entity_name: str,
     entity_path: str,
     declaration_path: str = "architecture.yaml",
@@ -438,7 +485,7 @@ def entity_read(
 
     return _call(
         lambda: read_entity(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             entity_name,
             entity_path,
             declaration_path,
@@ -448,7 +495,7 @@ def entity_read(
 
 @mcp.tool()
 def entity_read_related(
-    repository_path: str,
+    repository_id: str,
     entity_name: str,
     entity_path: str,
     declaration_path: str = "architecture.yaml",
@@ -457,7 +504,7 @@ def entity_read_related(
 
     return _call(
         lambda: read_related_entities(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             entity_name,
             entity_path,
             declaration_path,
@@ -467,7 +514,7 @@ def entity_read_related(
 
 @mcp.tool()
 def entity_update(
-    repository_path: str,
+    repository_id: str,
     entity_name: str,
     entity_path: str,
     content: str,
@@ -477,7 +524,7 @@ def entity_update(
 
     return _call(
         lambda: update_entity(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             entity_name,
             entity_path,
             content,
@@ -488,7 +535,7 @@ def entity_update(
 
 @mcp.tool()
 def entity_delete(
-    repository_path: str,
+    repository_id: str,
     entity_name: str,
     entity_path: str,
     declaration_path: str = "architecture.yaml",
@@ -497,7 +544,7 @@ def entity_delete(
 
     return _call(
         lambda: delete_entity(
-            _managed_path(repository_path),
+            _repository_path(repository_id),
             entity_name,
             entity_path,
             declaration_path,
@@ -507,7 +554,7 @@ def entity_delete(
 
 @mcp.tool()
 def entity_search(
-    repository_path: str,
+    repository_id: str,
     query: str,
     entity_name: str | None = None,
     declaration_path: str = "architecture.yaml",
@@ -519,7 +566,7 @@ def entity_search(
         lambda: [
             item.as_dict()
             for item in search_entities(
-                _managed_path(repository_path),
+                _repository_path(repository_id),
                 query,
                 entity_name,
                 declaration_path,
@@ -532,6 +579,7 @@ def entity_search(
 def main() -> None:
     """Run the MCP server over stdio."""
 
+    RepositoryRegistry().list()
     mcp.run(transport="stdio")
 
 

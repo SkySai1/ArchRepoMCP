@@ -6,6 +6,7 @@ from typing import Any
 
 import yaml
 
+from arch_repo_mcp.creation_guide import creation_guide
 from arch_repo_mcp.dsl import ValidationIssue, load_declaration
 from arch_repo_mcp.entities import EntityRecord, EntitySearchMatch, RelatedEntityRecord
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
@@ -45,6 +46,13 @@ def _schema_type(schema: dict[str, Any]) -> str:
         "null",
     }:
         return "nullable_string"
+    if isinstance(variants, list) and {item.get("type") for item in variants} == {
+        "object",
+        "null",
+    }:
+        mapping = next(item for item in variants if item.get("type") == "object")
+        assert mapping["additionalProperties"] == {"type": "string"}
+        return "nullable_string_map"
     raise AssertionError(f"Unsupported generated MCP schema: {schema}")
 
 
@@ -120,10 +128,12 @@ def _result_samples() -> dict[str, object]:
             "entities": [described_entity],
         },
         "repository_list": {
-            "workspace_root": "workspace",
+            "index_path": "config/repositories.json",
             "repositories": [],
         },
-        "repository_create": repository,
+        "repository_create": {"phase": "created", "repository_id": "uuid", **repository},
+        "repository_reindex": {"repository_id": "uuid", "repository_path": "/repo"},
+        "repository_unindex": {"repository_id": "uuid", "repository_path": "/repo"},
         "repository_open": repository,
         "repository_validate": validation,
         "repository_status": status,
@@ -135,18 +145,15 @@ def _result_samples() -> dict[str, object]:
         "repository_history": [commit],
         "repository_remotes": [remote],
         "remote_configure": remote,
-        "repository_clone": CloneResult(
-            "repository", "main", "a" * 40, "architecture.yaml"
-        ).as_dict(),
-        "repository_fetch": FetchResult(
-            "origin", "a" * 40, "b" * 40, False, False
-        ).as_dict(),
+        "repository_clone": {
+            "repository_id": "uuid",
+            **CloneResult("repository", "main", "a" * 40, "architecture.yaml").as_dict(),
+        },
+        "repository_fetch": FetchResult("origin", "a" * 40, "b" * 40, False, False).as_dict(),
         "repository_pull": PullResult(
             "origin", "main", "main", "a" * 40, "b" * 40, "fast_forward"
         ).as_dict(),
-        "repository_publish": PublishResult(
-            "origin", "main", "main", "a" * 40
-        ).as_dict(),
+        "repository_publish": PublishResult("origin", "main", "main", "a" * 40).as_dict(),
         "entity_list": [entity],
         "entity_create": entity,
         "entity_read": read_entity,
@@ -217,3 +224,12 @@ def test_response_envelope_matches_normative_contract() -> None:
     assert success.keys() == set(envelope["success_fields"])
     assert error.keys() == set(envelope["error_fields"])
     assert error["error"].keys() == set(envelope["normalized_error_fields"])
+
+
+def test_creation_guide_result_matches_contract() -> None:
+    expected = _contract()["tools"]["repository_create"]["result"]
+    result = creation_guide()
+    assert result.keys() == set(expected["guide_fields"])
+    assert result["phase"] == "guide"
+    for example in result["examples"]:
+        assert example.keys() == set(expected["example_fields"])
