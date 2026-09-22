@@ -13,6 +13,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
+from arch_repo_mcp.git_environment import git_environment
 from arch_repo_mcp.local_git import list_remotes, repository_status
 from arch_repo_mcp.repository import (
     DEFAULT_DECLARATION_PATH,
@@ -632,7 +633,7 @@ def _run_git(
     if root is not None:
         command.extend(["-C", str(root)])
     command.extend(arguments)
-    environment = os.environ.copy()
+    environment = git_environment()
     environment["GIT_TERMINAL_PROMPT"] = "0"
     environment["GCM_INTERACTIVE"] = "Never"
     try:

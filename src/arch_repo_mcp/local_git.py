@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
+from arch_repo_mcp.git_environment import git_environment
 from arch_repo_mcp.repository import (
     DEFAULT_DECLARATION_PATH,
     RepositoryContext,
@@ -649,6 +650,7 @@ def _run_git(
             encoding="utf-8",
             errors="replace",
             timeout=_GIT_TIMEOUT_SECONDS,
+            env=git_environment(),
         )
     except FileNotFoundError as exc:
         raise ArchRepoError(ErrorCode.GIT_ERROR, "Git executable was not found") from exc

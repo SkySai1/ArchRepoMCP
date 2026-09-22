@@ -62,7 +62,9 @@ mcp = MCPServer(
         "Use the user's absolute directory path on the MCP server's filesystem. "
         "No repository_id is needed, and an empty repository_list does not prevent indexing. "
         "The directory must already be a Git repository root containing architecture.yaml "
-        "and its declared templates and entities. The tool checks that exact root before "
+        "and its declared templates and entities, with its own .git directory or Git worktree "
+        "file. Parent directories do not need .git; they may also be independent repositories. "
+        "The tool checks that exact root before "
         "reading and validating contents at that path; it never substitutes the server's "
         "working directory or a parent repository. If the declaration has another name, "
         "pass declaration_path relative to repository_path; template and entity paths are "
@@ -174,6 +176,9 @@ def repository_index(
 
     repository_path is the user's existing directory on the MCP server's filesystem.
     It must be an absolute Git root, not a declaration filename or an entity subdirectory.
+    Only this final directory needs its own .git directory or Git worktree file. Parent
+    directories may have no .git or have an independent repository. Russian letters and
+    spaces are supported; preserve the supplied spelling and whitespace.
     The exact Git root is checked BEFORE reading any DSL, templates or entities. Contents
     are validated at that path, never in the server's working directory or a parent repository.
     declaration_path defaults to architecture.yaml relative to repository_path. For example:

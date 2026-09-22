@@ -33,6 +33,14 @@ def _uuid(value: str) -> str:
         raise ArchRepoError(ErrorCode.VALIDATION_ERROR, "repository_id must be a UUID") from exc
 
 
+def _same_directory(stored_path: str, path: Path) -> bool:
+    stored = Path(stored_path)
+    try:
+        return not stored.is_symlink() and stored.resolve() == stored and stored.samefile(path)
+    except OSError:
+        return False  # Stale entries must not prevent indexing another repository.
+
+
 def _unique_mapping(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -162,11 +170,14 @@ class RepositoryRegistry:
         self, repository_path: str, declaration_path: str = "architecture.yaml"
     ) -> dict[str, str]:
         path = absolute_repository_path(repository_path)
-        open_repository(path, declaration_path, require_root=True)
+        context = open_repository(path, declaration_path, require_root=True)
+        path = context.root
         with self._locked():
             entries = self._read()
             for entry in entries:
-                if entry["repository_path"] == str(path):
+                if entry["repository_path"] == str(path) or _same_directory(
+                    entry["repository_path"], path
+                ):
                     return entry
             entry = {"repository_id": str(uuid4()), "repository_path": str(path)}
             entries.append(entry)
@@ -180,10 +191,7 @@ class RepositoryRegistry:
         path = Path(entry["repository_path"])
         if path.is_symlink() or path.resolve() != path:
             raise ArchRepoError(ErrorCode.INVALID_REPOSITORY, "Indexed repository path has changed")
-        if discover_repository_root(path) != path:
-            raise ArchRepoError(
-                ErrorCode.INVALID_REPOSITORY, "Indexed path is no longer a Git root"
-            )
+        discover_repository_root(path, require_root=True)
         return str(path)
 
     def unindex(self, repository_id: str) -> dict[str, str]:

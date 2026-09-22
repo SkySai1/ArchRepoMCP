@@ -23,6 +23,7 @@ from arch_repo_mcp.dsl import (
     parse_declaration,
 )
 from arch_repo_mcp.errors import ArchRepoError, ErrorCode
+from arch_repo_mcp.git_environment import git_environment
 from arch_repo_mcp.relation_model import parse_relation_groups
 
 DEFAULT_DECLARATION_PATH = "architecture.yaml"
@@ -173,7 +174,7 @@ def create_repository_from_content(
     return open_repository(target, relative_declaration.as_posix())
 
 
-def discover_repository_root(repository_path: str | Path) -> Path:
+def discover_repository_root(repository_path: str | Path, *, require_root: bool = False) -> Path:
     """Resolve the containing local Git repository without any network operation."""
 
     candidate = Path(repository_path).expanduser()
@@ -199,6 +200,15 @@ def discover_repository_root(repository_path: str | Path) -> Path:
             details={"path": str(candidate)},
         )
 
+    if require_root:
+        metadata = candidate / ".git"
+        if metadata.is_symlink() or not (metadata.is_dir() or metadata.is_file()):
+            raise ArchRepoError(
+                ErrorCode.INVALID_REPOSITORY,
+                "repository_path must contain its own .git directory or Git worktree file",
+                details={"repository_path": str(candidate)},
+            )
+
     try:
         result = subprocess.run(
             ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
@@ -208,6 +218,7 @@ def discover_repository_root(repository_path: str | Path) -> Path:
             encoding="utf-8",
             errors="replace",
             timeout=_GIT_TIMEOUT_SECONDS,
+            env=git_environment(),
         )
     except FileNotFoundError as exc:
         raise ArchRepoError(ErrorCode.GIT_ERROR, "Git executable was not found") from exc
@@ -228,7 +239,14 @@ def discover_repository_root(repository_path: str | Path) -> Path:
     if not output:
         raise ArchRepoError(ErrorCode.GIT_ERROR, "Git returned an empty repository root")
     try:
-        return Path(output).resolve(strict=True)
+        root = Path(output).resolve(strict=True)
+        if require_root and not root.samefile(candidate):
+            raise ArchRepoError(
+                ErrorCode.INVALID_REPOSITORY,
+                "Git root differs from repository_path; repository contents were not validated",
+                details={"repository_path": str(candidate), "git_root": str(root)},
+            )
+        return root
     except OSError as exc:
         raise ArchRepoError(
             ErrorCode.INVALID_REPOSITORY, "Git repository root could not be resolved"
@@ -243,13 +261,7 @@ def open_repository(
 ) -> RepositoryContext:
     """Open a repository only when its declaration and complete structure are valid."""
 
-    root = discover_repository_root(repository_path)
-    if require_root and root != Path(repository_path).resolve():
-        raise ArchRepoError(
-            ErrorCode.INVALID_REPOSITORY,
-            "repository_path must identify the Git root; parent repository was not validated",
-            details={"repository_path": str(repository_path)},
-        )
+    root = discover_repository_root(repository_path, require_root=require_root)
     relative_declaration, declaration_file = _resolve_confined_file(
         root, declaration_path, label="declaration"
     )
@@ -395,6 +407,7 @@ def _validate_branch_name(branch_name: str) -> None:
             encoding="utf-8",
             errors="replace",
             timeout=_GIT_TIMEOUT_SECONDS,
+            env=git_environment(),
         )
     except FileNotFoundError as exc:
         raise ArchRepoError(ErrorCode.GIT_ERROR, "Git executable was not found") from exc
@@ -420,6 +433,7 @@ def _initialize_git_repository(repository: Path, initial_branch: str) -> None:
             encoding="utf-8",
             errors="replace",
             timeout=_GIT_TIMEOUT_SECONDS,
+            env=git_environment(),
         )
     except FileNotFoundError as exc:
         raise ArchRepoError(ErrorCode.GIT_ERROR, "Git executable was not found") from exc
