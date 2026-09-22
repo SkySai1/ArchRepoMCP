@@ -65,8 +65,9 @@ mcp = MCPServer(
         "explicit repository_clone, repository_fetch, repository_pull, and "
         "repository_publish tools; no tool performs an implicit pull, push, or provider API "
         "request. Existing repository operations require UUID, never a filesystem path. "
-        "Use repository_reindex to validate and register existing repositories, and "
-        "repository_unindex to remove only an index entry."
+        "Use repository_index with an absolute repository_path to validate existing "
+        "repository contents and assign a persistent UUID (preserving it on repeated calls). "
+        "Use repository_unindex to remove only an index entry."
     ),
     version=__version__,
 )
@@ -143,13 +144,27 @@ def repository_unindex(repository_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+def repository_index(
+    repository_path: str,
+    declaration_path: str = "architecture.yaml",
+) -> dict[str, Any]:
+    """Index an absolute local Git root after full DSL, template and entity validation.
+
+    Return repository_id (a persistent UUID) and repository_path. Repeated calls validate
+    again and preserve the UUID. Repository files are unchanged; no network access.
+    """
+
+    return _call(lambda: RepositoryRegistry().reindex(repository_path, declaration_path))
+
+
+@mcp.tool()
 def repository_reindex(
     repository_path: str,
     declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
-    """Validate an existing absolute Git root and register it, preserving an existing UUID."""
+    """Compatibility alias for repository_index; validate contents and preserve existing UUID."""
 
-    return _call(lambda: RepositoryRegistry().reindex(repository_path, declaration_path))
+    return repository_index(repository_path, declaration_path)
 
 
 @mcp.tool()

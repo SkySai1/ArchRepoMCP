@@ -24,6 +24,7 @@ offline.
 - описание модели выбранного repository через `repository_describe` и явный выбор через
   `repository_list`;
 - постоянный JSON-индекс в `~/.config/arch-repo-mcp/` и выбор repository по UUID;
+- индексация существующего repository по пути с проверкой содержимого через `repository_index`;
 - удаление записи из индекса без удаления файлов и повторная индексация после validation;
 - Entity Service: `list`, `read`, `search`, `create`, `update`, `delete`;
 - rollback entity mutations, не прошедших полную repository validation;
@@ -38,7 +39,7 @@ offline.
 ```text
 MCP tools
    │
-   ├── Repository Registry ── UUID / list / reindex / unindex
+   ├── Repository Registry ── UUID / list / index / reindex / unindex
    ├── Repository Catalog ─── creation guide / describe
    ├── Repository Service ─── create / open / validate
    ├── Entity Service ────── list / read / search / create / update / delete
@@ -132,7 +133,7 @@ python -m arch_repo_mcp.server
 При обновлении удалите `ARCH_REPO_MCP_WORKSPACE`, `ARCH_REPO_MCP_ENV_FILE` и старую переменную
 `ARCH_REPO_MCP_GOVERNMENT_REPOSITORY` из настроек MCP host. Путь repository больше не читается
 из переменных окружения или `.env`. Существующие файлы не перемещаются; каждый прежний repository
-нужно явно зарегистрировать через `repository_reindex(repository_path="/absolute/path")`.
+нужно явно зарегистрировать через `repository_index(repository_path="/absolute/path")`.
 Вызовы старого API с `repository_path` вместо UUID необходимо обновить.
 
 ## Запуск в Goose на macOS
@@ -211,7 +212,8 @@ repository по полному пути `/Users/you/ArchitectureRepositories/exa
 | --- | --- |
 | `repository_describe` | Получить DSL, entity semantics и содержимое templates выбранного repository |
 | `repository_list` | Получить индексированные repositories для явного выбора UUID |
-| `repository_reindex` | Проверить существующий repository по абсолютному пути и зарегистрировать UUID |
+| `repository_index` | Проверить содержимое repository по абсолютному пути и присвоить UUID |
+| `repository_reindex` | Совместимый аналог `repository_index` для повторной индексации |
 | `repository_unindex` | Удалить UUID из индекса, сохранив физический repository |
 | `repository_create` | Получить справку или создать repository из явно переданных DSL и templates |
 | `repository_open` | Открыть и полностью проверить локальный architecture repository |
@@ -238,7 +240,7 @@ repository по полному пути `/Users/you/ArchitectureRepositories/exa
 | `entity_delete` | Локально удалить entity с validation и rollback |
 
 Все операции над индексированным repository принимают обязательный `repository_id` (UUID).
-`repository_reindex` принимает абсолютный `repository_path` для регистрации существующего
+`repository_index` и `repository_reindex` принимают абсолютный `repository_path` для регистрации существующего
 каталога; `repository_create` и `repository_clone` принимают новый абсолютный `target_path`. Repository и Entity tools,
 которым требуется декларация, также принимают необязательный `declaration_path` с явно
 документированным значением по умолчанию `architecture.yaml`. Git inspection отделён от
@@ -275,7 +277,7 @@ DSL validation и остаётся доступен для диагностик�
 3. Передать комплект через тот же `repository_create` с `target_path`, `architecture_yaml`,
    `templates`. Читать или создавать исходные файлы на диске сервера агенту не требуется.
 4. Получить `repository_id`. Для существующих repositories взять UUID через `repository_list`,
-   а для ещё не индексированного каталога — через `repository_reindex`.
+   а для ещё не индексированного каталога — через `repository_index`.
 5. Вызвать `repository_describe(repository_id=...)`. Использовать именно его `description`,
    `relations`, `path_rule`, `filename_rule`, `format`, `template_content` при классификации текста.
 6. Передавать этот UUID в `entity_create`, затем в `entity_update` с полным UTF-8 содержимым.
@@ -324,17 +326,42 @@ MCP создаёт `architecture.yaml`, templates и каталоги точны
 не заменяется. Начальная ветка — `main`, если явно не передан другой `initial_branch`.
 Commit и remote автоматически не создаются. Каждый repository хранит собственную модель.
 
+### Индексация существующего repository
+
+Вызовите MCP-инструмент `repository_index` с аргументами:
+
+```json
+{"repository_path": "/Users/you/ArchitectureRepositories/notes"}
+```
+
+После полной проверки Git root, DSL, templates и содержимого сущностей он вернёт:
+
+```json
+{
+  "ok": true,
+  "result": {
+    "repository_id": "9ac62b0d-1dbd-4e78-b02f-b9c34a1d2e70",
+    "repository_path": "/Users/you/ArchitectureRepositories/notes"
+  }
+}
+```
+
+UUID хранится в пользовательском индексе и используется в дальнейших вызовах MCP.
+Файлы repository не изменяются. При ошибках содержимого запись не добавляется; для уже
+индексированного пути проверка выполняется заново, а UUID при успехе сохраняется.
+
 ### Удаление из индекса и повторная индексация
 
 `repository_unindex(repository_id=...)` удаляет только запись, сохраняя все файлы и Git history.
 Это работает и для отсутствующего или невалидного каталога. Старый UUID после удаления даёт
 `NOT_FOUND`.
 
-`repository_reindex(repository_path="/absolute/path")` проверяет, что путь — точный Git root,
+`repository_index(repository_path="/absolute/path")` проверяет, что путь — точный Git root,
 а DSL, templates и сущности валидны. Для уже индексированного пути сохраняет UUID, иначе
 создаёт новый. Нестандартный путь декларации можно передать через `declaration_path`; его
 нужно затем явно передавать в соответствующие операции, поскольку индекс хранит только UUID
 и путь repository. При переносе каталога зарегистрируйте новый путь и явно удалите старую запись.
+`repository_reindex` сохранён как совместимый аналог `repository_index`.
 
 `repository_list` возвращает сохранённые записи, включая устаревшие; каталогов не сканирует.
 UUID сохраняется между запусками сервера. Записи индекса обновляются атомарно под блокировкой;

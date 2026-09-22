@@ -266,7 +266,10 @@ def test_symlink_substitution_and_lost_git_root_do_not_redirect_uuid(tmp_path: P
 
 
 def test_all_existing_repository_tools_require_uuid() -> None:
-    exceptions = {"repository_create", "repository_clone", "repository_list", "repository_reindex"}
+    exceptions = {
+        "repository_create", "repository_clone", "repository_list",
+        "repository_index", "repository_reindex",
+    }
     for tool in asyncio.run(mcp.list_tools()):
         if tool.name in exceptions:
             continue

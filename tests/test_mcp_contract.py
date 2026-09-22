@@ -132,6 +132,7 @@ def _result_samples() -> dict[str, object]:
             "repositories": [],
         },
         "repository_create": {"phase": "created", "repository_id": "uuid", **repository},
+        "repository_index": {"repository_id": "uuid", "repository_path": "/repo"},
         "repository_reindex": {"repository_id": "uuid", "repository_path": "/repo"},
         "repository_unindex": {"repository_id": "uuid", "repository_path": "/repo"},
         "repository_open": repository,

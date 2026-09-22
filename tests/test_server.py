@@ -14,6 +14,7 @@ def test_expected_mcp_tools_are_registered() -> None:
         "branch_switch",
         "remote_configure",
         "repository_create",
+        "repository_index",
         "repository_reindex",
         "repository_unindex",
         "repository_branches",

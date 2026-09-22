@@ -5,6 +5,7 @@ Exercise real Git repositories and the persisted index through the public MCP to
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 import sys
@@ -12,10 +13,13 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+import yaml
 
 from arch_repo_mcp.registry import RepositoryRegistry
 from arch_repo_mcp.repository import create_repository
 from arch_repo_mcp.server import (
+    mcp,
+    repository_index,
     repository_list,
     repository_open,
     repository_reindex,
@@ -66,6 +70,70 @@ def file_snapshot(root: Path) -> dict[Path, bytes]:
     return {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
 
 
+def test_index_through_mcp_assigns_uuid_for_existing_repository(tmp_path: Path) -> None:
+    root = existing_repository(tmp_path, "existing")
+    before = file_snapshot(root)
+
+    async def scenario() -> None:
+        indexed = await mcp.call_tool("repository_index", {"repository_path": str(root)})
+        response = indexed.structured_content
+        assert response["ok"], response
+        identifier = response["result"]["repository_id"]
+        assert str(UUID(identifier)) == identifier
+        assert response["result"]["repository_path"] == str(root.resolve())
+        opened = await mcp.call_tool("repository_open", {"repository_id": identifier})
+        assert opened.structured_content["ok"], opened
+        repeated = await mcp.call_tool("repository_index", {"repository_path": str(root)})
+        assert repeated.structured_content == response
+
+    asyncio.run(scenario())
+    assert file_snapshot(root) == before
+
+
+@pytest.mark.parametrize("already_indexed", [False, True])
+@pytest.mark.parametrize(
+    "failure", ["dsl", "template", "entity", "relation", "matching", "symlink"]
+)
+def test_index_validates_contents_before_changing_registry(
+    tmp_path: Path, already_indexed: bool, failure: str
+) -> None:
+    root = existing_repository(tmp_path, "existing")
+    repository_list()
+    if already_indexed:
+        assert repository_index(str(root))["ok"]
+    index_before = RepositoryRegistry().path.read_bytes()
+    declaration = root / "architecture.yaml"
+    if failure == "dsl":
+        declaration.write_text("invalid", encoding="utf-8")
+    elif failure == "template":
+        (root / "templates/fact.md").unlink()
+    elif failure == "entity":
+        (root / "facts/F-0001.md").write_text("no front matter", encoding="utf-8")
+    elif failure == "relation":
+        (root / "facts/F-0001.md").write_text(
+            "---\nrelations:\n- entity: absent\n  files: [X-0001.md]\n---\n",
+            encoding="utf-8",
+        )
+    elif failure == "matching":
+        data = yaml.safe_load(declaration.read_text(encoding="utf-8"))
+        data["entities"].append({**data["entities"][0], "name": "duplicate"})
+        declaration.write_text(yaml.safe_dump(data), encoding="utf-8")
+        (root / "facts/F-0001.md").write_text("---\ntitle: Fact\n---\n", encoding="utf-8")
+    else:
+        external = tmp_path / "external.md"
+        external.write_text("---\ntitle: External\n---\n", encoding="utf-8")
+        (root / "facts/F-0001.md").symlink_to(external)
+    files_before = file_snapshot(root)
+
+    rejected = repository_index(str(root))
+
+    assert not rejected["ok"], rejected
+    assert rejected["error"]["code"] in {"INVALID_REPOSITORY", "VALIDATION_ERROR"}
+    assert rejected["error"]["message"] != "Unexpected operation failure"
+    assert RepositoryRegistry().path.read_bytes() == index_before
+    assert file_snapshot(root) == files_before
+
+
 @pytest.mark.parametrize("relative_path", PATH_CASES)
 def test_index_round_trip_preserves_localized_paths_and_files(
     tmp_path: Path, localized_home: Path, relative_path: str
@@ -74,7 +142,7 @@ def test_index_round_trip_preserves_localized_paths_and_files(
     canonical_path = str(root.resolve())
     before = file_snapshot(root)
 
-    response = repository_reindex(str(root))
+    response = repository_index(str(root))
     assert response["ok"], response
     entry = response["result"]
     identifier = entry["repository_id"]
@@ -83,6 +151,7 @@ def test_index_round_trip_preserves_localized_paths_and_files(
 
     # Equivalent spellings must not create duplicate identities.
     for spelling in (str(root), f"{root}/", f"{root}/."):
+        assert repository_index(spelling) == response
         assert repository_reindex(spelling) == response
 
     index_path = localized_home / ".config/arch-repo-mcp/repositories.json"
@@ -114,7 +183,7 @@ def test_localized_index_survives_a_fresh_process(
     tmp_path: Path, localized_home: Path
 ) -> None:
     root = existing_repository(tmp_path, "Проекты 项目/Архитектура été システム")
-    response = repository_reindex(str(root))
+    response = repository_index(str(root))
     assert response["ok"], response
     entry = response["result"]
     code = """
@@ -159,7 +228,7 @@ def test_index_keeps_distinct_localized_paths_separate(tmp_path: Path) -> None:
         "Архитектура системы", "Архитектура  системы", "Архитектура системы ", "系统 架构",
     ):
         root = existing_repository(tmp_path, f"Общие проекты/{name}")
-        response = repository_reindex(str(root))
+        response = repository_index(str(root))
         assert response["ok"], response
         entries.append(response["result"])
 
@@ -178,7 +247,7 @@ def test_reindex_accepts_localized_declaration_path(tmp_path: Path) -> None:
     target.parent.mkdir()
     (root / "architecture.yaml").rename(target)
 
-    response = repository_reindex(str(root), declaration_path)
+    response = repository_index(str(root), declaration_path)
     assert response["ok"], response
     assert repository_reindex(str(root), declaration_path) == response
     opened = repository_open(response["result"]["repository_id"], declaration_path)
@@ -200,7 +269,7 @@ def test_invalid_localized_paths_do_not_change_index(
     tmp_path: Path, invalid_kind: str, error_code: str
 ) -> None:
     root = existing_repository(tmp_path, "Мои проекты/系统 架构")
-    response = repository_reindex(str(root))
+    response = repository_index(str(root))
     assert response["ok"], response
     before = RepositoryRegistry().path.read_bytes()
     candidates = {
@@ -211,7 +280,7 @@ def test_invalid_localized_paths_do_not_change_index(
         "traversal": f"{root}/../{root.name}",
     }
 
-    rejected = repository_reindex(candidates[invalid_kind])
+    rejected = repository_index(candidates[invalid_kind])
     assert not rejected["ok"], rejected
     assert rejected["error"]["code"] == error_code
     assert RepositoryRegistry().path.read_bytes() == before

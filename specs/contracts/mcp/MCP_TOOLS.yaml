@@ -1,6 +1,6 @@
 contract:
   name: arch-repo-mcp-tools
-  version: '0.5'
+  version: '0.6'
   lifecycle: REPOSITORY_LIFECYCLE.md
   transport: stdio
 
@@ -27,6 +27,11 @@ tools:
   repository_unindex:
     arguments:
       repository_id: {type: string, required: true}
+    result: {kind: object, fields: [repository_id, repository_path]}
+  repository_index:
+    arguments:
+      repository_path: {type: string, required: true}
+      declaration_path: {type: string, required: false, default: architecture.yaml}
     result: {kind: object, fields: [repository_id, repository_path]}
   repository_reindex:
     arguments:
