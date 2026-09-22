@@ -223,7 +223,8 @@ def discover_repository_root(repository_path: str | Path) -> Path:
             details={"path": str(candidate)},
         )
 
-    output = result.stdout.strip()
+    # Git terminates the path with a newline; spaces belong to the directory name.
+    output = result.stdout.removesuffix("\n")
     if not output:
         raise ArchRepoError(ErrorCode.GIT_ERROR, "Git returned an empty repository root")
     try:
