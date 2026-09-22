@@ -37,6 +37,11 @@ def creation_guide() -> dict[str, Any]:
         "presets_table": "\n".join(presets),
         "relations_table": "\n".join(relations),
         "instructions": [
+            "This guide is for creating a NEW repository. To add an EXISTING directory to "
+            "the index, call repository_index with "
+            '{"repository_path": "/absolute/path/to/repository"}; no UUID is required. '
+            "It validates the contents at that exact Git root and returns repository_id. "
+            "Use that UUID in repository_describe; do not recreate the existing directory.",
             "Choose entity types for the user's request. Presets are examples, not fixed types.",
             "Build architecture.yaml with declaration.kind=architecture_repository and version=v2. "
             "Every entity needs unique name, nonempty description and files rules. "

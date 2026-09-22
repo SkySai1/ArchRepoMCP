@@ -57,16 +57,31 @@ mcp = MCPServer(
     "ArchRepoMCP",
     description="Local-first management of DSL-defined architecture Git repositories",
     instructions=(
-        "Call repository_create without arguments for DSL presets, relations and examples. "
-        "Submit target_path, architecture_yaml and templates to repository_create to create. "
-        "Call repository_list, select one repository_id UUID, and call repository_describe to "
-        "obtain that repository's authoritative DSL and templates before entity operations. "
+        "To add an EXISTING directory to the index, call repository_index directly with "
+        '{"repository_path": "/absolute/path/to/repository"}. '
+        "Use the user's absolute directory path on the MCP server's filesystem. "
+        "No repository_id is needed, and an empty repository_list does not prevent indexing. "
+        "The directory must already be a Git repository root containing architecture.yaml "
+        "and its declared templates and entities. The tool checks that exact root before "
+        "reading and validating contents at that path; it never substitutes the server's "
+        "working directory or a parent repository. If the declaration has another name, "
+        "pass declaration_path relative to repository_path; template and entity paths are "
+        "also relative to repository_path. On success the tool stores that directory's "
+        "canonical absolute path and returns result.repository_id (UUID). Repeated indexing "
+        "validates again and preserves the UUID. On failure report the validation error; "
+        "do not create, clone, copy, or initialize a replacement repository. "
+        "Then call repository_describe with the returned repository_id before entity operations. "
+        "For an ALREADY INDEXED directory, repository_list provides UUIDs and absolute paths; "
+        "select the entry matching the user's directory. repository_open takes repository_id "
+        "and does not add directories to the index. Pass a custom declaration_path on every "
+        "subsequent tool that reads the DSL. "
+        "For a NEW repository only, call repository_create without arguments for DSL guidance, "
+        "then submit target_path, architecture_yaml and templates to repository_create. "
         "Every repository is self-contained. Network access occurs only through the "
         "explicit repository_clone, repository_fetch, repository_pull, and "
         "repository_publish tools; no tool performs an implicit pull, push, or provider API "
-        "request. Existing repository operations require UUID, never a filesystem path. "
-        "Use repository_index with an absolute repository_path to validate existing "
-        "repository contents and assign a persistent UUID (preserving it on repeated calls). "
+        "request. Operations on indexed repositories require repository_id; "
+        "repository_index and its compatibility alias repository_reindex take repository_path. "
         "Use repository_unindex to remove only an index entry."
     ),
     version=__version__,
@@ -131,7 +146,11 @@ def repository_describe(
 
 @mcp.tool()
 def repository_list() -> dict[str, Any]:
-    """List persistent repository UUIDs and absolute paths, including stale entries."""
+    """List indexed repository UUIDs and absolute paths, including stale entries.
+
+    To add an existing directory, including when this list is empty, call repository_index
+    with its absolute repository_path. This list does not discover or register directories.
+    """
 
     return _call(lambda: RepositoryRegistry().list())
 
@@ -148,10 +167,26 @@ def repository_index(
     repository_path: str,
     declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
-    """Index an absolute local Git root after full DSL, template and entity validation.
+    """Add an existing directory to the index by its absolute path; no UUID is required.
 
-    Return repository_id (a persistent UUID) and repository_path. Repeated calls validate
-    again and preserve the UUID. Repository files are unchanged; no network access.
+    Call directly, even if repository_list is empty. Example arguments:
+    {"repository_path": "/absolute/path/to/repository"}
+
+    repository_path is the user's existing directory on the MCP server's filesystem.
+    It must be an absolute Git root, not a declaration filename or an entity subdirectory.
+    The exact Git root is checked BEFORE reading any DSL, templates or entities. Contents
+    are validated at that path, never in the server's working directory or a parent repository.
+    declaration_path defaults to architecture.yaml relative to repository_path. For example:
+    {"repository_path": "/absolute/path/to/repository", "declaration_path": "model/custom.yaml"}
+    Template and entity paths are also relative to repository_path, not the declaration folder.
+
+    On success, result contains repository_id (persistent UUID) and repository_path (the
+    validated directory's canonical absolute path). Use result.repository_id in
+    repository_describe, repository_open and entity tools; continue passing any custom
+    declaration_path to tools that read the DSL. Repeated calls validate again and retain UUID.
+    On failure, report error.code, error.message and error.details; the index is unchanged.
+    Do not use repository_create or repository_clone to add this existing directory.
+    This tool does not initialize Git, create or copy files, commit, or access the network.
     """
 
     return _call(lambda: RepositoryRegistry().reindex(repository_path, declaration_path))
@@ -211,7 +246,11 @@ def repository_open(
     repository_id: str,
     declaration_path: str = "architecture.yaml",
 ) -> dict[str, Any]:
-    """Open and fully validate a local architecture Git repository without network access."""
+    """Open and validate an indexed repository by repository_id UUID without network access.
+
+    To register an existing directory by path first, call repository_index(repository_path).
+    This tool does not accept a filesystem path or create an index entry.
+    """
 
     return _call(
         lambda: _repository_result(

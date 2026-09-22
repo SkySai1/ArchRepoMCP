@@ -90,6 +90,78 @@ def test_index_through_mcp_assigns_uuid_for_existing_repository(tmp_path: Path) 
     assert file_snapshot(root) == before
 
 
+@pytest.mark.parametrize("target_valid", [False, True])
+def test_index_validates_absolute_target_independently_of_cwd_and_existing_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target_valid: bool
+) -> None:
+    other = existing_repository(tmp_path, "other")
+    target = existing_repository(tmp_path, "requested")
+    assert repository_index(str(other))["ok"]
+    before = RepositoryRegistry().path.read_bytes()
+    # Give the working directory and requested directory opposite validation outcomes.
+    invalid = other if target_valid else target
+    (invalid / "facts/F-0001.md").write_text("no front matter", encoding="utf-8")
+    monkeypatch.chdir(other)
+
+    result = repository_index(str(target))
+
+    assert result["ok"] is target_valid, result
+    if target_valid:
+        assert result["result"]["repository_path"] == str(target.resolve())
+        assert repository_open(result["result"]["repository_id"])["ok"]
+    else:
+        assert result["error"]["details"]["repository_root"] == str(target.resolve())
+        assert RepositoryRegistry().path.read_bytes() == before
+
+
+@pytest.mark.parametrize("index_tool", [repository_index, repository_reindex])
+def test_index_rejects_subdirectory_before_reading_parent_declaration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, index_tool
+) -> None:
+    parent = existing_repository(tmp_path, "parent")
+    nested = parent / "facts"
+    repository_list()
+    before = RepositoryRegistry().path.read_bytes()
+    reads = []
+    read_text = Path.read_text
+
+    def record_read(path, *args, **kwargs):
+        reads.append(path)
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", record_read)
+    result = index_tool(str(nested))
+
+    assert result["error"]["code"] == "INVALID_REPOSITORY"
+    assert result["error"]["details"]["repository_path"] == str(nested.resolve())
+    assert not reads  # Root mismatch must be rejected before loading any repository content.
+    assert RepositoryRegistry().path.read_bytes() == before
+
+
+def test_index_custom_declaration_and_templates_are_resolved_from_requested_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = existing_repository(tmp_path, "requested")
+    model = target / "model"
+    model.mkdir()
+    (target / "architecture.yaml").rename(model / "custom.yaml")
+    # A conflicting template beside the declaration must not override the root's template.
+    (model / "templates").mkdir()
+    (model / "templates/fact.md").write_text("no front matter", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    result = repository_index(str(target), "model/custom.yaml")
+
+    assert result["ok"], result
+    assert result["result"]["repository_path"] == str(target.resolve())
+    before = RepositoryRegistry().path.read_bytes()
+    (target / "templates/fact.md").write_text("no front matter", encoding="utf-8")
+    rejected = repository_index(str(target), "model/custom.yaml")
+    assert not rejected["ok"], rejected
+    assert rejected["error"]["details"]["repository_root"] == str(target.resolve())
+    assert RepositoryRegistry().path.read_bytes() == before
+
+
 @pytest.mark.parametrize("already_indexed", [False, True])
 @pytest.mark.parametrize(
     "failure", ["dsl", "template", "entity", "relation", "matching", "symlink"]

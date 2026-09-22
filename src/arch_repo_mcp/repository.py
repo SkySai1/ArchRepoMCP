@@ -238,10 +238,18 @@ def discover_repository_root(repository_path: str | Path) -> Path:
 def open_repository(
     repository_path: str | Path,
     declaration_path: str = DEFAULT_DECLARATION_PATH,
+    *,
+    require_root: bool = False,
 ) -> RepositoryContext:
     """Open a repository only when its declaration and complete structure are valid."""
 
     root = discover_repository_root(repository_path)
+    if require_root and root != Path(repository_path).resolve():
+        raise ArchRepoError(
+            ErrorCode.INVALID_REPOSITORY,
+            "repository_path must identify the Git root; parent repository was not validated",
+            details={"repository_path": str(repository_path)},
+        )
     relative_declaration, declaration_file = _resolve_confined_file(
         root, declaration_path, label="declaration"
     )

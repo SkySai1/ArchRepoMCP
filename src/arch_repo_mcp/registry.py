@@ -162,9 +162,7 @@ class RepositoryRegistry:
         self, repository_path: str, declaration_path: str = "architecture.yaml"
     ) -> dict[str, str]:
         path = absolute_repository_path(repository_path)
-        context = open_repository(path, declaration_path)
-        if context.root != path:
-            raise ArchRepoError(ErrorCode.INVALID_REPOSITORY, "Path must identify the Git root")
+        open_repository(path, declaration_path, require_root=True)
         with self._locked():
             entries = self._read()
             for entry in entries:
